@@ -1,6 +1,6 @@
 # Android build guide
 
-- Package name: `xyz.dbdwz.app`
+- Package name: `com.example.app`
 - Version: `0.5.3` (`503`)
 - Build resources: `npm run build:app-plus`
 
