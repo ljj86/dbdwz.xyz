@@ -51,6 +51,14 @@
         <text>{{ submitting ? '处理中...' : '登录' }}</text>
       </view>
     </view>
+    <!-- #ifdef APP-PLUS -->
+    <view class="site-footer">
+      <view class="footer-record" @click="openAppRecordLink('https://beian.miit.gov.cn/')">
+        <image src="/static/resource-icons/miit-beian.png" mode="aspectFit" />
+        <text>皖ICP备2026013884号-4A</text>
+      </view>
+    </view>
+    <!-- #endif -->
   </view>
 </template>
 
@@ -69,6 +77,11 @@ export default {
     }
   },
   methods: {
+    // #ifdef APP-PLUS
+    openAppRecordLink(url) {
+      if (typeof plus !== 'undefined') plus.runtime.openURL(String(url || ''))
+    },
+    // #endif
     goBack() {
       uni.navigateBack({ delta: 1 })
     },

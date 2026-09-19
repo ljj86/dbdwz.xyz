@@ -77,6 +77,9 @@
         <view class="profile-menu-item" @click="openPasswordEditor"><text>⌘</text><text>修改密码</text></view>
         <view class="profile-menu-item" @click="openTrash"><text>♲</text><text>我的删除</text><text v-if="trashCount" class="trash-menu-count">{{ trashCount }}</text></view>
         <view v-if="isTester" class="profile-menu-item" @click="openPanel('extensions')"><text>⚙</text><text>扩展功能</text></view>
+        <!-- #ifdef APP-PLUS -->
+        <view class="profile-menu-item" @click.stop="handleAppUpdateButton"><text>↓</text><text>检查更新</text><text v-if="appUpdateAvailable" class="app-update-menu-state">有新版</text></view>
+        <!-- #endif -->
         <view class="profile-menu-item" @click="openPanel('updates')"><text>↻</text><text>更新记录</text></view>
         <view v-if="isTester" class="profile-menu-item" @click="openPanel('future')"><text>＋</text><text>未来加入功能</text></view>
         <view class="profile-menu-line"></view>
@@ -91,7 +94,17 @@
           <text class="user-name">{{ userName }}</text>
           <text class="user-status" :class="{ offline: !loggedIn }">{{ userStatus }}</text>
         </view>
-        <view class="profile-actions" v-if="loggedIn"><text class="profile-chevron">⌃</text></view>
+        <view class="profile-actions" v-if="loggedIn">
+          <!-- #ifdef APP-PLUS -->
+          <view class="app-update-button" :class="{ available: appUpdateAvailable, checking: appUpdateChecking }" @click.stop="handleAppUpdateButton" aria-label="检查安卓 APP 更新">
+            <text>{{ appUpdateChecking ? '…' : '↓' }}</text>
+            <view v-if="appUpdateAvailable" class="app-update-dot"></view>
+          </view>
+          <!-- #endif -->
+          <!-- #ifndef APP-PLUS -->
+          <text class="profile-chevron">⌃</text>
+          <!-- #endif -->
+        </view>
         <view class="profile-actions" v-else>
           <view class="login-btn" @click.stop="goLogin">
             <text>登录</text>
@@ -313,6 +326,14 @@
           <text class="empty-desc">页面建设中...</text>
         </view>
       </view>
+      <!-- #ifdef APP-PLUS -->
+      <view v-if="!activeTutorial" class="site-footer">
+        <view class="record-item record-link" @click="openAppRecordLink('https://beian.miit.gov.cn/')">
+          <image class="record-icon" src="/static/resource-icons/miit-beian.png" mode="aspectFit" />
+          <text>皖ICP备2026013884号-4A</text>
+        </view>
+      </view>
+      <!-- #endif -->
       </view>
 
     <view v-if="pendingUnpublishMaterial" class="unpublish-mask" @click="cancelUnpublish"></view>
@@ -482,6 +503,13 @@ export default {
       trashCount: 0,
       trashActionId: null,
       activeAccountPanel: '',
+      // #ifdef APP-PLUS
+      appUpdateChecking: false,
+      appUpdateAutoChecked: false,
+      appUpdateAvailable: false,
+      appUpdatePending: false,
+      appUpdateInfo: null,
+      // #endif
       serverStatus: null,
       serverStatusLoading: false,
       serverStatusError: '',
@@ -635,6 +663,12 @@ export default {
       this.refreshCurrentUser()
       this.loadMeetingMaterials()
       this.loadTrash(false)
+      // #ifdef APP-PLUS
+      if (!this.appUpdateAutoChecked) {
+        this.appUpdateAutoChecked = true
+        this.checkForAppUpdate(true)
+      }
+      // #endif
     }
   },
   onUnload() {
@@ -643,6 +677,90 @@ export default {
     // #endif
   },
   methods: {
+    // #ifdef APP-PLUS
+    openAppRecordLink(url) {
+      if (typeof plus !== 'undefined') plus.runtime.openURL(String(url || ''))
+    },
+    versionToCode(version) {
+      const parts = String(version || '').split('.').map(value => Number(value) || 0)
+      return (parts[0] || 0) * 10000 + (parts[1] || 0) * 100 + (parts[2] || 0)
+    },
+    currentVersionCode() {
+      let code = this.versionToCode(this.appVersion)
+      if (typeof plus !== 'undefined' && Number(plus.runtime.versionCode)) code = Number(plus.runtime.versionCode)
+      return code
+    },
+    handleAppUpdateButton() {
+      this.profileMenuOpen = false
+      if (this.appUpdateAvailable && this.appUpdateInfo) return this.showAppUpdateDialog(this.appUpdateInfo)
+      this.checkForAppUpdate(false)
+    },
+    checkForAppUpdate(silent = false) {
+      if (this.appUpdateChecking) return
+      const token = uni.getStorageSync('token')
+      if (!token) return
+      this.appUpdateChecking = true
+      uni.request({
+        url: apiUrl('/api/app-updates/latest?t=' + Date.now()),
+        header: { Authorization: 'Bearer ' + token },
+        success: response => {
+          const release = response.data && response.data.code === 200 && response.data.data ? response.data.data.release : null
+          if (!release) {
+            if (!silent) uni.showToast({ title: (response.data && response.data.message) || '检查更新失败', icon: 'none' })
+            return
+          }
+          const newer = Number(release.versionCode) > this.currentVersionCode()
+          this.appUpdateInfo = release
+          this.appUpdateAvailable = newer && !!release.hasPackage && !!release.downloadUrl
+          this.appUpdatePending = newer && !this.appUpdateAvailable
+          if (silent) return
+          if (this.appUpdateAvailable) return this.showAppUpdateDialog(release)
+          if (this.appUpdatePending) return uni.showModal({ title: '新版本准备中', content: `v${release.versionName} 已登记，安装包尚未上传。`, showCancel: false })
+          uni.showToast({ title: '已是最新版本', icon: 'success' })
+        },
+        fail: () => { if (!silent) uni.showToast({ title: '无法连接更新服务器', icon: 'none' }) },
+        complete: () => { this.appUpdateChecking = false }
+      })
+    },
+    showAppUpdateDialog(release) {
+      const notes = Array.isArray(release.releaseNotes) && release.releaseNotes.length
+        ? '\n\n' + release.releaseNotes.slice(0, 5).map(item => `• ${item}`).join('\n')
+        : ''
+      uni.showModal({
+        title: release.title || `发现新版本 v${release.versionName}`,
+        content: `当前版本 v${this.appVersion}，可更新到 v${release.versionName}。${notes}`,
+        confirmText: '立即更新',
+        cancelText: '稍后',
+        showCancel: !release.mandatory,
+        success: result => { if (result.confirm) this.downloadAndInstallAppUpdate(release) }
+      })
+    },
+    downloadAndInstallAppUpdate(release) {
+      const token = uni.getStorageSync('token')
+      if (!token || !release || !release.downloadUrl) return
+      uni.showLoading({ title: '下载更新 0%', mask: true })
+      const task = uni.downloadFile({
+        url: apiUrl(release.downloadUrl),
+        header: { Authorization: 'Bearer ' + token },
+        success: result => {
+          if (result.statusCode !== 200 || !result.tempFilePath) {
+            uni.hideLoading()
+            return uni.showToast({ title: '安装包下载失败', icon: 'none' })
+          }
+          uni.showLoading({ title: '正在安装', mask: true })
+          plus.runtime.install(result.tempFilePath, { force: false }, () => {
+            uni.hideLoading()
+            uni.showModal({ title: '安装完成', content: '新版本已经安装，是否立即重启 APP？', confirmText: '立即重启', success: modal => { if (modal.confirm) plus.runtime.restart() } })
+          }, error => {
+            uni.hideLoading()
+            uni.showModal({ title: '无法安装', content: String(error && error.message ? error.message : '请允许安装未知来源应用后重试'), showCancel: false })
+          })
+        },
+        fail: () => { uni.hideLoading(); uni.showToast({ title: '更新包下载失败', icon: 'none' }) }
+      })
+      if (task && task.onProgressUpdate) task.onProgressUpdate(progress => uni.showLoading({ title: `下载更新 ${Math.max(0, Math.min(100, progress.progress || 0))}%`, mask: true }))
+    },
+    // #endif
     handleTutorialMessage(event) {
       // 只接受本站电子书发出的返回消息
       if (event.origin !== window.location.origin) return
@@ -1476,9 +1594,35 @@ export default {
 .profile-actions {
   display: flex;
   align-items: center;
+  gap: 7px;
   margin-left: auto;
   flex-shrink: 0;
 }
+
+/* #ifdef APP-PLUS */
+.app-update-button {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: #2F6FE4;
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(47,111,228,.32);
+  font-size: 21px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.app-update-button.available { background: #16A36A; animation: update-pulse 1.7s ease-in-out infinite; }
+.app-update-button.checking { opacity: .72; }
+.app-update-dot { position: absolute; top: -2px; right: -2px; width: 9px; height: 9px; border: 2px solid #fff; border-radius: 50%; background: #FF4D3D; }
+.app-update-menu-state { margin-left: auto; padding: 2px 6px; border-radius: 8px; background: #16A36A; color: #fff; font-size: 9px; }
+@keyframes update-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+/* #endif */
 
 .logout-btn,
 .login-btn {

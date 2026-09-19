@@ -42,6 +42,7 @@ docs/v0.5.3-*
 # 运行期上传资料与本地测试产物
 资源/
 协作论文/
+安卓发布/
 .playwright-cli/
 .workbuddy/
 test-*.yaml

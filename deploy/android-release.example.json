@@ -1,0 +1,13 @@
+{
+  "versionName": "0.5.3",
+  "versionCode": 503,
+  "title": "dbdwz.xyz v0.5.3",
+  "releaseNotes": [
+    "Initial Android release",
+    "Authenticated in-app update support"
+  ],
+  "mandatory": false,
+  "publishedAt": "",
+  "apkFilename": "dbdwz-v0.5.3.apk",
+  "sha256": ""
+}

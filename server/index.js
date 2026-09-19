@@ -14,6 +14,7 @@ const materialRoutes = require('./routes/materials');
 const systemRoutes = require('./routes/system');
 const resourceRoutes = require('./routes/resources');
 const collaborationRoutes = require('./routes/collaboration');
+const appUpdateRoutes = require('./routes/app-updates');
 
 const app = express();
 const PORT = Number(process.env.PORT);
@@ -47,6 +48,7 @@ app.use('/api/materials', materialRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/resources', resourceRoutes);
 app.use('/api/collaboration', collaborationRoutes);
+app.use('/api/app-updates', appUpdateRoutes);
 app.use('/static/web', tutorialStaticMiddleware);
 app.use('/materials-files/:folder', async (req, res, next) => {
   try {
