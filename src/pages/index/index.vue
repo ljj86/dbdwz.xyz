@@ -9,7 +9,7 @@
             <image class="brand-logo" :src="logoSvg" mode="aspectFit" />
           </view>
           <view class="brand-text">
-            <text class="brand-title">dbdwz.xyz</text>
+            <text class="brand-title">个人数字空间</text>
             <text class="brand-sub">组会资料网站</text>
             <text class="brand-version">v{{ appVersion }}</text>
           </view>
@@ -201,7 +201,7 @@
       <view v-else class="home-empty">
         <view class="home-landing" v-if="activeNav === 'home'">
           <view class="home-hero">
-            <view class="home-eyebrow">DBDWZ.XYZ · OPEN HOME</view>
+            <view class="home-eyebrow">个人数字空间 · OPEN HOME</view>
             <text class="home-title">组会资料与科研绘图工作台</text>
             <text class="home-desc">主页和科研绘图电子书无需登录即可浏览；上传资料、组会资料和电子教程需登录后使用。</text>
             <view class="home-actions">
@@ -233,7 +233,7 @@
         <view class="tutorial-landing" v-else-if="activeNav === 'tutorials'">
           <view class="tutorial-head">
             <view>
-              <text class="tutorial-eyebrow">DBDWZ.XYZ · LEARNING</text>
+              <text class="tutorial-eyebrow">个人数字空间 · LEARNING</text>
               <text class="tutorial-title">电子教程</text>
               <text class="tutorial-subtitle">从工具配置到项目实践，一步一步跟着做</text>
             </view>
@@ -312,19 +312,6 @@
           <text class="empty-title">{{ getActiveNavLabel() }}</text>
           <text class="empty-desc">页面建设中...</text>
         </view>
-      </view>
-
-      <!-- 备案信息 -->
-      <view v-if="!activeTutorial" class="site-footer">
-        <a class="record-item record-link" :href="icpUrl" target="_blank" rel="noopener noreferrer">
-          <image class="record-icon" :src="icpIcon" mode="aspectFit" />
-          <text>{{ icpNumber }}</text>
-        </a>
-        <view class="record-separator"></view>
-        <a class="record-item record-link" :href="policeUrl" target="_blank" rel="noopener noreferrer">
-          <image class="record-icon" :src="policeIcon" mode="aspectFit" />
-          <text>{{ policeNumber }}</text>
-        </a>
       </view>
       </view>
 
@@ -439,7 +426,7 @@
         <view class="update-item"><text>v0.3.8 · 2026-07-15</text><strong>测试员网站推荐</strong><small>新增测试员专属资源推荐页和数据库上传入口，按四类收录 38 个原站网站，并可继续发布新推荐。</small></view>
         <view class="update-item"><text>v0.3.7 · 2026-07-14</text><strong>文档在线预览更新</strong><small>上传后预生成 Office PDF 和视频缓存，支持 Markdown、公式、代码、图片、HTML、PDF 与常见视频在线预览。</small></view>
         <view class="update-item"><text>v0.3.6 · 2026-07-14</text><strong>修改、密码与多文件上传</strong><small>新增资料修改页、临时上传区、多文件拖放、真实进度、最新修改时间和密码修改。</small></view>
-        <view class="update-item"><text>v0.3.5 · 2026-07-14</text><strong>备案信息与部署基线</strong><small>加入可点击的 ICP、公安备案记录和官方图标，并以腾讯云实际部署包作为后续部署文档基线。</small></view>
+        <view class="update-item"><text>v0.3.5 · 2026-07-14</text><strong>备案信息与部署基线</strong><small>加入可点击的 ICP、公安备案记录和官方图标，并以生产环境部署包作为后续部署文档基线。</small></view>
         <view class="update-item"><text>v0.3.4 · 2026-07-14</text><strong>上传与预览实验失败存档</strong><small>修复自动刷新、0% 卡住和模拟进度等问题，但整体状态仍不稳定，仅保留用于复盘，禁止部署。</small></view>
         <view class="update-item"><text>v0.3.3 · 2026-07-14</text><strong>预转换与上传优化实验</strong><small>尝试 Office 预转换、富文本预览、临时区、幂等和签名下载；未建立独立 Git 标签。</small></view>
         <view class="update-item"><text>v0.3.2 · 2026-07-14</text><strong>腾讯云部署前稳定版本</strong><small>加入同源后端、回收站、早期资料导入、服务器容量、PM2、Nginx、数据库快照和 OpenClaw 部署文档。</small></view>
@@ -471,7 +458,6 @@ import { isLogin, getUser, clearAuth, setAuth } from '@/store/auth.js'
 import { createTutorialTicket, logout as logoutApi } from '@/api/auth.js'
 import { getStoredTheme, setGlobalTheme } from '@/utils/theme.js'
 import { apiUrl, appTutorialPath, tutorialSessionUrl } from '@/utils/api.js'
-import { ICP_ICON, POLICE_ICON, ICP_URL, POLICE_URL, ICP_NUMBER, POLICE_NUMBER } from '@/utils/beian.js'
 
 export default {
   data() {
@@ -511,12 +497,6 @@ export default {
       userStatus: '离线',
       avatarText: '?',
       logoSvg: '',
-      icpIcon: ICP_ICON,
-      policeIcon: POLICE_ICON,
-      icpUrl: ICP_URL,
-      policeUrl: POLICE_URL,
-      icpNumber: ICP_NUMBER,
-      policeNumber: POLICE_NUMBER,
       meetingUsers: [],
       meetingMaterials: [],
       selectedMemberId: null,
