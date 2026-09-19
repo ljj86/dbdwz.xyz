@@ -1,0 +1,147 @@
+{
+	"pages": [
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "dbdwz.xyz",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/login/login",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "登录",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/upload/upload",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "上传资料",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/meeting-cover/meeting-cover",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "组会资料",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/meeting-material/meeting-material",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "上传组会资料",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/material-detail/material-detail",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "组会资料预览",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/material-edit/material-edit",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "修改组会资料",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/test-preview/test-preview",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "封面预览测试",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/resource-recommend/resource-recommend",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "资源推荐",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/resource-recommend-upload/resource-recommend-upload",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "上传网站推荐",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/content-edit/content-edit",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "内容编辑",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/collaboration/collaboration",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "论文协作",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/tutorial-detail/tutorial-detail",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "DeepSeek 接入 VS Code",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		},
+		{
+			"path": "pages/web-tutorial/web-tutorial",
+			"style": {
+				"navigationStyle": "default",
+				"navigationBarTextStyle": "black",
+				"navigationBarTitleText": "电子教程",
+				"navigationBarBackgroundColor": "#F3E4C9",
+				"backgroundColor": "#F3E4C9"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationStyle": "custom",
+		"navigationBarTextStyle": "black",
+		"navigationBarTitleText": "dbdwz.xyz",
+		"navigationBarBackgroundColor": "#F3E4C9",
+		"backgroundColor": "#F3E4C9"
+	}
+}

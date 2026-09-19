@@ -1,0 +1,36 @@
+function cfg = nsfc_figure_config()
+%NSFC_FIGURE_CONFIG Portable paths and shared visual constants.
+helperDir = fileparts(mfilename('fullpath'));
+packageDir = fileparts(helperDir);
+
+cfg = struct();
+cfg.package_dir = packageDir;
+cfg.project_dir = packageDir;
+cfg.figure_dir = fullfile(packageDir, 'composites');
+cfg.data_root = fullfile(packageDir, 'data');
+cfg.demo_dir = fullfile(cfg.data_root, 'demo');
+cfg.observed_dir = fullfile(cfg.data_root, 'observed');
+cfg.processed_dir = fullfile(cfg.data_root, 'processed');
+cfg.log_dir = fullfile(packageDir, 'logs');
+cfg.export_dir = fullfile(packageDir, 'exports');
+cfg.third_party_dir = fullfile(packageDir, 'third_party');
+cfg.visible = 'off';
+cfg.use_optional_export_fig = false;
+cfg.renderer = 'opengl';
+cfg.font_name = 'Arial';
+cfg.font_size = 10;
+cfg.line_width = 1.6;
+cfg.colors = struct( ...
+    'blue',   [0.16 0.40 0.67], ...
+    'orange', [0.91 0.49 0.16], ...
+    'green',  [0.20 0.60 0.38], ...
+    'red',    [0.78 0.24 0.24], ...
+    'purple', [0.49 0.34 0.67], ...
+    'cyan',   [0.18 0.63 0.72], ...
+    'gray',   [0.42 0.45 0.49], ...
+    'light',  [0.94 0.96 0.98], ...
+    'dark',   [0.12 0.15 0.18]);
+cfg.optional = struct( ...
+    'cm_available', exist('cm', 'file') == 2, ...
+    'export_fig_available', exist('export_fig', 'file') == 2);
+end

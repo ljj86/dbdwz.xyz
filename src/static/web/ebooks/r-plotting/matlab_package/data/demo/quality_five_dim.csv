@@ -1,0 +1,4 @@
+sample_id,q_preserve,q_remove,q_boundary,q_context,q_hallucination,mos
+demo_good,0.92,0.89,0.86,0.91,0.93,88
+demo_boundary,0.90,0.86,0.48,0.57,0.88,61
+demo_semantic,0.85,0.42,0.70,0.54,0.35,43

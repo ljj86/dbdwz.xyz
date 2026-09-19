@@ -1,0 +1,21 @@
+group,panel,script,formula,data,description
+fig04,a,fig04a_gmm_probability.m,Eq. (4),gmm_components.csv,3-D context-conditioned GMM probability
+fig04,b,fig04b_covariance_shrinkage.m,Eq. (5),none,Covariance shrinkage ellipses
+fig04,c,fig04c_directional_retention.m,Eq. (6),none,Directional retained-deviation curves
+fig04,d,fig04d_pmp_descent.m,Eqs. (4)-(7),gmm_components.csv,3-D posterior-mean and PMP path
+fig06,a,fig06a_spatial_frequency_fusion.m,conceptual,none,Spatial-frequency evidence fusion
+fig06,b,fig06b_angular_compactness.m,Eq. (11),none,Angular-margin compactness
+fig06,c,fig06c_calibration_threshold.m,Eq. (12),calibration_scores.csv,Independent calibration threshold
+fig06,d,fig06d_mahalanobis_ellipsoids.m,Eq. (12),calibration_scores.csv + openset_features.csv,3-D Mahalanobis ellipsoids
+figS01,a,figS01a_conditioning_sensitivity.m,Eq. (5),none,Condition-number sensitivity surface
+figS01,b,figS01b_retention_sensitivity.m,Eq. (6),none,Retained-deviation sensitivity surface
+figS01,c,figS01c_pmp_contraction.m,Eq. (7) extension E1,none,PMP contraction surface
+figS01,d,figS01d_soft_mining_response.m,Eq. (10),none,Soft-mining response curves
+figS02,a,figS02a_patch_deviation_heatmap.m,Eq. (8),patch_scores.csv,Masked patch-deviation heatmap
+figS02,b,figS02b_multiscale_defect_heatmap.m,Eq. (8),patch_scores.csv,Multi-scale fused defect heatmap
+figS02,c,figS02c_five_dimensional_quality.m,Eq. (2),quality_five_dim.csv,Five-dimensional quality radar
+figS02,d,figS02d_quality_calibration.m,Eq. (8) extension E3,none,Monotone calibrated-quality curve
+figS03,a,figS03a_prototype_purity.m,failure boundary,failure_curves.csv,Prototype purity versus mask area
+figS03,b,figS03b_effective_coverage.m,failure boundary,failure_curves.csv,Effective coverage versus mask area
+figS03,c,figS03c_localization_auroc.m,failure boundary,failure_curves.csv,Localization AUROC versus mask area
+figS03,d,figS03d_fallback_state_machine.m,proposal fallback rule,none,Evidence-aware fallback state machine
