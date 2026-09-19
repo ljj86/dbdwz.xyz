@@ -4,7 +4,7 @@
     <view class="login-card">
       <view class="card-title">
         <text class="title-text">登录</text>
-        <text class="title-sub">dbdwz.xyz</text>
+        <text class="title-sub">个人数字空间</text>
       </view>
 
       <!-- 用户名 -->
@@ -51,20 +51,12 @@
         <text>{{ submitting ? '处理中...' : '登录' }}</text>
       </view>
     </view>
-
-    <!-- 页脚 -->
-    <view class="site-footer">
-      <a class="footer-record" :href="icpUrl" target="_blank" rel="noopener noreferrer"><image :src="icpIcon" mode="aspectFit" /><text>{{ icpNumber }}</text></a>
-      <text class="footer-sep">|</text>
-      <a class="footer-record" :href="policeUrl" target="_blank" rel="noopener noreferrer"><image :src="policeIcon" mode="aspectFit" /><text>{{ policeNumber }}</text></a>
-    </view>
   </view>
 </template>
 
 <script>
 import { login } from '@/api/auth.js'
 import { setAuth } from '@/store/auth.js'
-import { ICP_ICON, POLICE_ICON, ICP_URL, POLICE_URL, ICP_NUMBER, POLICE_NUMBER } from '@/utils/beian.js'
 
 export default {
   data() {
@@ -73,13 +65,7 @@ export default {
       username: '',
       password: '',
       errorMsg: '',
-      submitting: false,
-      icpIcon: ICP_ICON,
-      policeIcon: POLICE_ICON,
-      icpUrl: ICP_URL,
-      policeUrl: POLICE_URL,
-      icpNumber: ICP_NUMBER,
-      policeNumber: POLICE_NUMBER
+      submitting: false
     }
   },
   methods: {
