@@ -429,7 +429,7 @@
         <view class="update-item"><text>v0.3.5 · 2026-07-14</text><strong>备案信息与部署基线</strong><small>加入可点击的 ICP、公安备案记录和官方图标，并以生产环境部署包作为后续部署文档基线。</small></view>
         <view class="update-item"><text>v0.3.4 · 2026-07-14</text><strong>上传与预览实验失败存档</strong><small>修复自动刷新、0% 卡住和模拟进度等问题，但整体状态仍不稳定，仅保留用于复盘，禁止部署。</small></view>
         <view class="update-item"><text>v0.3.3 · 2026-07-14</text><strong>预转换与上传优化实验</strong><small>尝试 Office 预转换、富文本预览、临时区、幂等和签名下载；未建立独立 Git 标签。</small></view>
-        <view class="update-item"><text>v0.3.2 · 2026-07-14</text><strong>腾讯云部署前稳定版本</strong><small>加入同源后端、回收站、早期资料导入、服务器容量、PM2、Nginx、数据库快照和 OpenClaw 部署文档。</small></view>
+        <view class="update-item"><text>v0.3.2 · 2026-07-14</text><strong>生产部署前稳定版本</strong><small>加入同源后端、回收站、早期资料导入、服务器容量、PM2、Nginx、数据库快照和 OpenClaw 部署文档。</small></view>
         <view class="update-item"><text>v0.3.1 · 2026-07-14</text><strong>组会资料与个人资料</strong><small>新增组会资料、成员浏览、个人资料存储、全站主题、回收站和基础在线预览。</small></view>
         <view class="update-item"><text>v0.2.10 · 2026-07-12</text><strong>文章卡片编辑器</strong><small>完善文字、图片、表格、视频、文档、代码、公式、网站和文件卡片编辑。</small></view>
         <view class="update-item"><text>v0.2.9 · 2026-07-12</text><strong>文字编辑面板重做</strong><small>重做功能按钮、文字输入和 Markdown 预览三区布局。</small></view>
