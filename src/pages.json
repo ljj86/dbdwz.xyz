@@ -5,7 +5,7 @@
 			"style": {
 				"navigationStyle": "custom",
 				"navigationBarTextStyle": "black",
-				"navigationBarTitleText": "dbdwz.xyz",
+				"navigationBarTitleText": "个人数字空间",
 				"navigationBarBackgroundColor": "#F3E4C9",
 				"backgroundColor": "#F3E4C9"
 			}
@@ -140,7 +140,7 @@
 	"globalStyle": {
 		"navigationStyle": "custom",
 		"navigationBarTextStyle": "black",
-		"navigationBarTitleText": "dbdwz.xyz",
+		"navigationBarTitleText": "个人数字空间",
 		"navigationBarBackgroundColor": "#F3E4C9",
 		"backgroundColor": "#F3E4C9"
 	}
