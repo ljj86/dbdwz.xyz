@@ -14,7 +14,6 @@ const recommendedResources = [
   ['Qoder', 'https://qoder.com/zh', 'AI 编程工具', 'development', icon('qoder.png')],
   ['AI Vocal Remover', 'https://aivocalremover.com/', 'AI 分离人声和伴奏', 'development', icon('aivocalremover.png')],
   ['樱花穿透', 'https://www.natfrp.com/', '内网穿透服务', 'development', icon('natfrp.png')],
-  ['腾讯云 SSL 证书', 'https://console.cloud.tencent.com/ssl', '获取和管理 SSL 证书', 'development', icon('tencent-cloud.png')],
   ['全国互联网安全管理服务平台', 'https://beian.mps.gov.cn/#/', '公安联网备案', 'development', icon('mps-beian.png')],
   ['ICP/IP 地址/域名信息备案管理系统', 'https://beian.miit.gov.cn/#/Integrated/index', '工信部 ICP 备案', 'development', icon('miit-beian.png')],
   ['LaTeX 在线编辑', 'https://www.latexlive.com/', '公式识别、编辑、预览与多格式导出', 'development', icon('latexlive.png')],
