@@ -1,5 +1,5 @@
 {
-    "name" : "dbdwz.xyz",
+    "name" : "Personal Workspace",
     "appid" : "",
     "description" : "组会资料与科研绘图工作台",
     "versionName" : "0.5.3",
@@ -22,7 +22,7 @@
         "distribute" : {
             /* android打包配置 */
             "android" : {
-                "packagename" : "xyz.dbdwz.app",
+                "packagename" : "com.example.app",
                 "permissions" : [
                     "<uses-permission android:name=\"android.permission.INTERNET\"/>",
                     "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>"
@@ -53,7 +53,7 @@
     "mp-toutiao" : {
         "usingComponents" : true
     },
-    "uniStatistics": {  
+    "uniStatistics": {
         "enable": false
     },
     "vueVersion" : "3"
