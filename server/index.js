@@ -16,11 +16,14 @@ const resourceRoutes = require('./routes/resources');
 const collaborationRoutes = require('./routes/collaboration');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT);
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  throw new Error('PORT 必须在 server/.env 中配置为有效端口');
+}
 const HOST = process.env.HOST || '127.0.0.1';
 const frontendRoot = path.resolve(__dirname, '..', 'dist', 'build', 'h5');
 const allowedOrigins = new Set(
-  String(process.env.CORS_ORIGINS || 'https://www.dbdwz.xyz,https://dbdwz.xyz,http://localhost:5173')
+  String(process.env.CORS_ORIGINS || '')
     .split(',')
     .map(value => value.trim())
     .filter(Boolean)
@@ -75,9 +78,9 @@ app.use('/materials-files', express.static(path.resolve(__dirname, '..', '资源
 app.get('/api/health', async (req, res) => {
   try {
     await getPool().query('SELECT 1');
-    res.json({ code: 200, message: 'ok', service: `dbdwz-v${appVersion}`, database: 'connected', time: new Date().toISOString() });
+    res.json({ code: 200, message: 'ok', service: `app-v${appVersion}`, database: 'connected', time: new Date().toISOString() });
   } catch (error) {
-    res.status(503).json({ code: 503, message: 'database unavailable', service: `dbdwz-v${appVersion}`, database: 'disconnected', time: new Date().toISOString() });
+    res.status(503).json({ code: 503, message: 'database unavailable', service: `app-v${appVersion}`, database: 'disconnected', time: new Date().toISOString() });
   }
 });
 
