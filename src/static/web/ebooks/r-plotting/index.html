@@ -39,7 +39,7 @@
 <script src="matlab-charts.js?v=20260813d"></script>
 <script src="matlab-figure-gallery.js?v=20260813a"></script>
 <script>
-const returnToApp=document.getElementById('returnToApp');returnToApp.onclick=e=>{if(window.parent!==window){e.preventDefault();window.parent.postMessage({type:'dbdwz:return-main'},location.origin)}};
+const returnToApp=document.getElementById('returnToApp');if(new URLSearchParams(location.search).get('app')==='1')returnToApp.style.display='none';returnToApp.onclick=e=>{if(window.parent!==window){e.preventDefault();window.parent.postMessage({type:'dbdwz:return-main'},location.origin)}};
 const C={blue:'#356aa0',orange:'#db7a36',green:'#3c9a58',red:'#c33f33',purple:'#7655a6',gray:'#b8b5b0',ink:'#2a211a'};
 const sections=[
 {chapter:'第4章 ggplot2核心概念',id:'sec-4-2',no:'4.2',title:'几何对象：点与线',type:'scatter',desc:'同一份数据通过不同 geom 表达为点、线或面积。这里用点图建立最基础的图层概念。',code:`library(ggplot2)\n\ndf <- data.frame(x=1:12, y=c(2,3,2.8,4,4.4,5.2,5,6.3,6.8,7.1,8,8.7))\nggplot(df, aes(x, y)) +\n  geom_point(size=3, colour="#356AA0") +\n  theme_classic()`},

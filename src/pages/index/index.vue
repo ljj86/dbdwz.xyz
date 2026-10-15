@@ -210,6 +210,11 @@
         </scroll-view>
       </view>
 
+      <!-- 团队项目 -->
+      <view v-else-if="activeNav === 'team'" class="team-hub">
+        <TeamProjects />
+      </view>
+
       <!-- 游客与登录用户都可访问的主页 -->
       <view v-else class="home-empty">
         <view class="home-landing" v-if="activeNav === 'home'">
@@ -326,6 +331,7 @@
           <text class="empty-desc">页面建设中...</text>
         </view>
       </view>
+      <WebRecords v-if="!activeTutorial" />
       <!-- #ifdef APP-PLUS -->
       <view v-if="!activeTutorial" class="site-footer">
         <view class="record-item record-link" @click="openAppRecordLink('https://beian.miit.gov.cn/')">
@@ -438,6 +444,7 @@
           </view>
           <small v-if="serverStatus" class="server-checked-time">更新时间：{{ formatStatusTime(serverStatus.checkedAt) }}</small>
         </view>
+        <view class="update-item"><text>v0.5.4 · 2026-09-28</text><strong>团队项目更新</strong><small>团队项目按李俊杰、马昊分行展示，支持手机浏览；接入新版游戏与各项目入口。恢复网站双备案、完整电子教程及科研绘图资源，保留主站原测试员权限。</small></view>
         <view class="update-item"><text>v0.5.3 · 2026-09-19</text><strong>电子教程扩充与安卓 APP 备案</strong><small>新增 FlyWire、Web of Science、LeakDetector 和私有云 RTX 3090 教程；统一电子书接管式侧边栏，并完成安卓 APP 备案与正式发布证书准备。</small></view>
         <view class="update-item"><text>v0.5.2 · 2026-09-05</text><strong>电子教程</strong><small>新增电子教程入口与 DeepSeek 接入 VS Code 图文教程；普通成员侧边栏精简为五项，论文协作入口暂时屏蔽。</small></view>
         <view class="update-item"><text>v0.5.1 · 2026-08-27</text><strong>科研绘图电子书与开放主页</strong><small>主页无需登录即可浏览；新增 R 科研绘图电子书入口，开放已完善图例、交互预览、R/MATLAB 代码及源文件下载。</small></view>
@@ -475,12 +482,15 @@
 </template>
 
 <script>
+import WebRecords from '@/components/WebRecords.vue'
 import { isLogin, getUser, clearAuth, setAuth } from '@/store/auth.js'
 import { createTutorialTicket, logout as logoutApi } from '@/api/auth.js'
 import { getStoredTheme, setGlobalTheme } from '@/utils/theme.js'
 import { apiUrl, appTutorialPath, tutorialSessionUrl } from '@/utils/api.js'
+import TeamProjects from '@/components/TeamProjects.vue'
 
 export default {
+  components: { WebRecords, TeamProjects },
   data() {
     return {
       appVersion: __APP_VERSION__,
@@ -577,6 +587,11 @@ export default {
           key: 'project',
           label: '项目',
           icon: '<svg viewBox="0 0 24 24" fill="none" style="width:20px;height:20px;"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z" stroke="currentColor" stroke-width="2.4"/></svg>'
+        },
+        {
+          key: 'team',
+          label: '团队项目',
+          icon: '<svg viewBox="0 0 24 24" fill="none" style="width:20px;height:20px;"><circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="2.2"/><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M16 3a4 4 0 0 1 0 8M22 21v-2a4 4 0 0 0-3-3.87" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>'
         }
       ],
       recentFiles: [
@@ -614,6 +629,8 @@ export default {
         if (b.key === 'home') return 1
         if (a.key === 'rbook') return -1
         if (b.key === 'rbook') return 1
+        if (a.key === 'team') return 1
+        if (b.key === 'team') return -1
         return 0
       })
     },
@@ -842,6 +859,21 @@ export default {
         uni.showToast({ title: error.message || '教程授权失败，请重新登录', icon: 'none' })
       }
       return
+      // #endif
+      // #ifdef H5
+      if (path.startsWith('/static/')) {
+        try {
+          const response = await fetch(path, { credentials: 'same-origin' })
+          const content = await response.text()
+          if (!response.ok || /<div\s+id=["']app["']/.test(content)) {
+            uni.showToast({ title: '该教程内容文件暂缺，正在恢复', icon: 'none', duration: 3000 })
+            return
+          }
+        } catch (error) {
+          uni.showToast({ title: '教程读取失败，请稍后重试', icon: 'none' })
+          return
+        }
+      }
       // #endif
       this.activeTutorial = { title, path }
       // #ifdef H5

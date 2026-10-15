@@ -33,6 +33,8 @@ src/static/web/ebooks/flywire-fafb-v783/
 src/static/web/ebooks/leakdetector/
 src/static/web/ebooks/private-cloud-rtx3090/
 src/static/web/ebooks/web-of-science/
+src/static/web/ebooks/mpa-net-v0.5/
+src/static/web/reports/
 docs/v0.5.2-*
 docs/v0.5.3-*
 
@@ -47,6 +49,16 @@ docs/v0.5.3-*
 .workbuddy/
 test-*.yaml
 test-img.png
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.sqlite
+*.sqlite3
+*.db
+runtime/
 
 # Editor directories and files
 .idea

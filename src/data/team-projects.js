@@ -1,0 +1,142 @@
+export const teamProjects = [
+  {
+    "id": "fly",
+    "owner": "lijunjie",
+    "ownerName": "李俊杰",
+    "name": "果蝇大脑",
+    "description": "探索果蝇神经网络与三维行为仿真。",
+    "icon": "brain",
+    "cover": "",
+    "link": "/team-apps/lijunjie/fly/",
+    "order": 10
+  },
+  {
+    "id": "attendance",
+    "owner": "lijunjie",
+    "ownerName": "李俊杰",
+    "name": "自助考勤",
+    "description": "查看已保存的寝室考勤、历史快照与汇报。",
+    "icon": "calendar",
+    "cover": "",
+    "link": "/team-apps/lijunjie/attendance/",
+    "order": 20
+  },
+  {
+    "id": "stock",
+    "owner": "lijunjie",
+    "ownerName": "李俊杰",
+    "name": "股票程序",
+    "description": "查看导入的股票池，使用会员研究与聊天工具。",
+    "icon": "chart",
+    "cover": "",
+    "link": "/team-apps/lijunjie/stock/",
+    "order": 30
+  },
+  {
+    "id": "resource-share",
+    "owner": "lijunjie",
+    "ownerName": "李俊杰",
+    "name": "资源共享",
+    "description": "整理、分享与查找团队常用资源，使用项目账号登录。",
+    "icon": "folder",
+    "cover": "",
+    "link": "/team-apps/lijunjie/resources/",
+    "order": 40,
+    "login": "project"
+  },
+  {
+    "id": "game",
+    "owner": "lijunjie",
+    "ownerName": "李俊杰",
+    "name": "游戏空间",
+    "description": "区域交通规划与角色对战，macOS 新版 v0.1.5.11。",
+    "icon": "game",
+    "cover": "",
+    "link": "/team-apps/lijunjie/game/",
+    "order": 50,
+    "login": "project"
+  },
+  {
+    "id": "mobile-shop",
+    "owner": "lijunjie",
+    "ownerName": "李俊杰",
+    "name": "购物商城",
+    "description": "打开适合手机浏览的购物商城。",
+    "icon": "store",
+    "cover": "",
+    "link": "/kzgn/khshop/",
+    "order": 60
+  },
+  {
+    "id": "mahao-market",
+    "owner": "mahao",
+    "ownerName": "马昊",
+    "name": "二手交易网站",
+    "description": "发布闲置物品、浏览校园好物，与卖家沟通。",
+    "icon": "store",
+    "cover": "",
+    "link": "/team-apps/mahao/market/",
+    "order": 10,
+    "login": "project"
+  },
+  {
+    "id": "mahao-face",
+    "owner": "mahao",
+    "ownerName": "马昊",
+    "name": "人脸识别",
+    "description": "管理人员与考勤记录，登录后可使用浏览器拍照识别。",
+    "icon": "face",
+    "cover": "",
+    "link": "/team-apps/mahao/face/",
+    "order": 20,
+    "login": "project"
+  },
+  {
+    "id": "mahao-reports",
+    "owner": "mahao",
+    "ownerName": "马昊",
+    "name": "汇报收集网站",
+    "description": "按小组提交、整理与下载汇报文件。",
+    "icon": "folder",
+    "cover": "",
+    "link": "/team-apps/mahao/reports/",
+    "order": 30,
+    "login": "project"
+  },
+  {
+    "id": "modeling",
+    "owner": "lijunjie",
+    "ownerName": "李俊杰",
+    "name": "数学建模",
+    "description": "科研绘图、模型分析与 LaTeX 工作台。",
+    "icon": "chart",
+    "cover": "",
+    "link": "/kzgn/figure/",
+    "order": 70,
+    "login": "project"
+  },
+  {
+    "id": "minecraft",
+    "owner": "lijunjie",
+    "ownerName": "李俊杰",
+    "name": "AI 玩我的世界",
+    "description": "查看 AI 机器人的状态、地图与任务，进入监控控制台。",
+    "icon": "game",
+    "cover": "",
+    "link": "/team-apps/lijunjie/minecraft/",
+    "order": 80,
+    "login": "project"
+  },
+  {
+    "id": "legacy",
+    "owner": "lijunjie",
+    "ownerName": "李俊杰",
+    "name": "旧版网站",
+    "description": "体验旧版网站的资料展示与协作界面。",
+    "icon": "folder",
+    "cover": "",
+    "link": "/team-apps/lijunjie/legacy/",
+    "order": 90,
+    "login": "project"
+  }
+];

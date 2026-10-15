@@ -1,9 +1,9 @@
 {
-    "name" : "Personal Workspace",
+    "name" : "dbdwz.xyz",
     "appid" : "",
     "description" : "组会资料与科研绘图工作台",
-    "versionName" : "0.5.3",
-    "versionCode" : "503",
+    "versionName" : "0.5.4",
+    "versionCode" : "504",
     "transformPx" : false,
     /* 5+App特有相关 */
     "app-plus" : {

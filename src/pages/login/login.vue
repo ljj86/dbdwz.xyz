@@ -51,6 +51,7 @@
         <text>{{ submitting ? '处理中...' : '登录' }}</text>
       </view>
     </view>
+    <WebRecords />
     <!-- #ifdef APP-PLUS -->
     <view class="site-footer">
       <view class="footer-record" @click="openAppRecordLink('https://beian.miit.gov.cn/')">
@@ -63,10 +64,12 @@
 </template>
 
 <script>
+import WebRecords from '@/components/WebRecords.vue'
 import { login } from '@/api/auth.js'
 import { setAuth } from '@/store/auth.js'
 
 export default {
+  components: { WebRecords },
   data() {
     return {
       showPassword: false,

@@ -53,10 +53,12 @@ app.use('/static/web', tutorialStaticMiddleware);
 app.use('/materials-files/:folder', async (req, res, next) => {
   try {
     const [rows] = await getPool().query(
-      'SELECT tester_only FROM meeting_materials WHERE folder = ? LIMIT 1',
+      'SELECT m.tester_only, COALESCE(u.materials_hidden, 0) AS uploader_hidden FROM meeting_materials m JOIN users u ON u.id = m.user_id WHERE m.folder = ? LIMIT 1',
       [path.basename(String(req.params.folder || ''))]
     );
-    if (!rows.length || !rows[0].tester_only) return next();
+    if (!rows.length) return next();
+    const needsAuth = !!rows[0].tester_only;
+    if (!needsAuth) return next();
     const bearer = String(req.headers.authorization || '').startsWith('Bearer ')
       ? String(req.headers.authorization).slice(7)
       : '';

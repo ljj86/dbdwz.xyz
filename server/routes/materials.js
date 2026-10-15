@@ -354,8 +354,8 @@ router.get('/', authMiddleware, async (req, res) => {
       "SELECT id, username, nickname, CASE WHEN COALESCE(avatar, '') <> '' THEN 1 ELSE 0 END AS has_avatar, UNIX_TIMESTAMP(updated_at) AS avatar_version FROM users WHERE role = 'user' ORDER BY CONVERT(nickname USING gbk), id"
     );
     const [materialRows] = await getPool().query(`
-      SELECT m.id, m.folder, m.user_id, m.title, m.description, m.tester_only, m.uploaded_at, m.updated_at,
-             u.username, u.nickname,
+      SELECT m.id, m.folder, m.user_id, m.title, m.description, m.ebook_url, m.tester_only, m.uploaded_at, m.updated_at,
+             u.username, u.nickname, COALESCE(u.materials_hidden, 0) AS uploader_hidden,
              CASE WHEN COALESCE(u.avatar, '') <> '' THEN 1 ELSE 0 END AS has_avatar,
              UNIX_TIMESTAMP(u.updated_at) AS avatar_version
       FROM meeting_materials m
@@ -391,7 +391,9 @@ router.get('/', authMiddleware, async (req, res) => {
       folder: material.folder,
       title: material.title,
       description: material.description || '',
+      ebookUrl: material.ebook_url || '',
       testerOnly: !!material.tester_only,
+      excludeFromAll: !!material.uploader_hidden && !isTester(req.user),
       uploader: {
         id: material.user_id,
         username: material.username,

@@ -68,6 +68,16 @@ async function init() {
     await pool.query('ALTER TABLE users MODIFY COLUMN avatar LONGTEXT');
   }
 
+  // 兼容成员组会资料的显示标记；文件访问仍由对应路由鉴权。
+  const [materialsHiddenColumns] = await pool.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = 'materials_hidden'
+  `, [DB_NAME]);
+  if (materialsHiddenColumns.length === 0) {
+    await pool.query('ALTER TABLE users ADD COLUMN materials_hidden TINYINT NOT NULL DEFAULT 0 AFTER status');
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS meeting_materials (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -101,6 +111,15 @@ async function init() {
   `, [DB_NAME]);
   if (testerOnlyColumns.length === 0) {
     await pool.query('ALTER TABLE meeting_materials ADD COLUMN tester_only TINYINT NOT NULL DEFAULT 0 AFTER description');
+  }
+
+  const [ebookUrlColumns] = await pool.query(`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'meeting_materials' AND COLUMN_NAME = 'ebook_url'
+  `, [DB_NAME]);
+  if (ebookUrlColumns.length === 0) {
+    await pool.query("ALTER TABLE meeting_materials ADD COLUMN ebook_url VARCHAR(500) NOT NULL DEFAULT '' AFTER description");
   }
 
   const [materialUpdatedColumns] = await pool.query(`

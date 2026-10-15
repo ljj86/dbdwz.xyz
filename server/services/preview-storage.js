@@ -118,7 +118,9 @@ async function sourceDescriptor(folderName, filename) {
     ...paths,
     size: stat.size,
     mtimeMs: Math.round(stat.mtimeMs),
-    signature: `${stat.size}:${Math.round(stat.mtimeMs)}`,
+    // 复制或迁移可能截断亚秒时间，按整秒匹配已有预览缓存。
+    mtimeSeconds: Math.floor(stat.mtimeMs / 1000),
+    signature: `${stat.size}:${Math.floor(stat.mtimeMs / 1000)}`,
     classification: classifyFile(paths.name)
   };
 }

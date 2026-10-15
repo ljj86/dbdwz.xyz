@@ -3,7 +3,6 @@
  * 并生成 matlab-figure-gallery.js（嵌入元数据 + 画廊渲染 + 灯箱）。 */
 'use strict';
 const fs = require('fs');
-const path = require('path');
 
 const CSV = path.resolve(__dirname, 'matlab_figures', 'figure_registry.csv');
 const OUT = path.resolve(__dirname, 'matlab-figure-gallery.js');

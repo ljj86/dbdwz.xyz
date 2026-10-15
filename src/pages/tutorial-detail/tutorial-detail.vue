@@ -91,16 +91,16 @@ export default {
       this.guideLoading = true
       this.guideError = ''
       uni.request({
-        url: '/static/tutorials/deepseek-vscode/guide.md',
+        url: '/static/web/tutorials/deepseek-vscode/guide.md',
         dataType: 'text',
         success: response => {
-          if (typeof response.data !== 'string') {
+          if (response.statusCode !== 200 || typeof response.data !== 'string' || /^\s*<!doctype html/i.test(response.data)) {
             this.guideError = '教程内容读取失败'
             return
           }
           const source = response.data.replace(
             /\]\(images\//g,
-            '](/static/tutorials/deepseek-vscode/images/'
+            '](/static/web/tutorials/deepseek-vscode/images/'
           )
           const sourceWithoutInlineToc = source.replace(/\n## 目录\n[\s\S]*?\n---\n/, '\n---\n')
           const tokens = markdown.parse(sourceWithoutInlineToc, {})
