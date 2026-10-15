@@ -89,6 +89,7 @@ export default {
       uni.navigateBack({ delta: 1 })
     },
     async handleSubmit() {
+      if (this.submitting) return
       if (!this.username.trim()) {
         this.errorMsg = '请输入用户名'
         return
@@ -109,9 +110,7 @@ export default {
 
         // 返回首页
         uni.showToast({ title: '登录成功', icon: 'none' })
-        setTimeout(() => {
-          uni.reLaunch({ url: '/pages/index/index' })
-        }, 800)
+        uni.reLaunch({ url: '/pages/index/index' })
       } catch (err) {
         this.errorMsg = err.message || '登录失败'
       } finally {

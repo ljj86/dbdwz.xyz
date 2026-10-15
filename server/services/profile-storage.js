@@ -1,9 +1,19 @@
 const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
+const { normalizeAvatar } = require('./avatar');
 
-const PROFILE_ROOT = path.resolve(__dirname, '..', '..', '个人资料');
+const PROFILE_ROOT = path.resolve(process.env.PROFILE_ROOT || path.join(__dirname, '..', '..', '个人资料'));
 const PROFILE_SCHEMA_VERSION = 2;
+const profileLocks = new Map();
+
+function withUserProfileLock(userId, action) {
+  const key = Number(userId);
+  const previous = profileLocks.get(key) || Promise.resolve();
+  const result = previous.catch(() => {}).then(action);
+  profileLocks.set(key, result);
+  return result.finally(() => { if (profileLocks.get(key) === result) profileLocks.delete(key); });
+}
 
 function userProfileDirectory(userId) {
   const id = Number(userId);
@@ -36,17 +46,19 @@ async function ensureUserDirectories(userId) {
 async function syncAvatarAsset(userId, avatar) {
   const avatarDirectory = path.join(userProfileDirectory(userId), 'avatar');
   await fs.mkdir(avatarDirectory, { recursive: true });
-  const match = String(avatar || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/);
+  const safeAvatar = await normalizeAvatar(avatar).catch(error => {
+    if (error.code === 'AVATAR_BUSY') throw error;
+    return '';
+  });
+  const match = safeAvatar.match(/^data:(image\/webp);base64,([A-Za-z0-9+/=]+)$/);
   if (!match) {
     const files = await fs.readdir(avatarDirectory).catch(() => []);
     await Promise.all(files.map(file => fs.rm(path.join(avatarDirectory, file), { force: true })));
     return '';
   }
 
-  const extensions = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
   const buffer = Buffer.from(match[2], 'base64');
-  const extension = extensions[match[1].toLowerCase()] || 'img';
-  const filename = `avatar-${crypto.createHash('sha1').update(buffer).digest('hex').slice(0, 12)}.${extension}`;
+  const filename = `avatar-${crypto.createHash('sha1').update(buffer).digest('hex').slice(0, 12)}.webp`;
   const target = path.join(avatarDirectory, filename);
   try {
     await fs.access(target);
@@ -115,7 +127,7 @@ async function writeProfile(profile) {
   return profile;
 }
 
-async function syncUserProfile(user, extra = {}) {
+async function syncUserProfileUnlocked(user, extra = {}) {
   const existing = await readProfile(user.id);
   const profile = existing || defaultProfile(user);
   const avatarFile = await syncAvatarAsset(user.id, user.avatar ?? profile.account?.avatar ?? '');
@@ -124,7 +136,7 @@ async function syncUserProfile(user, extra = {}) {
     username: user.username ?? profile.account?.username ?? '',
     nickname: user.nickname ?? profile.account?.nickname ?? '',
     passwordHash: user.password ?? user.passwordHash ?? profile.account?.passwordHash ?? '',
-    avatarFile: avatarFile || profile.account?.avatarFile || '',
+    avatarFile,
     email: user.email ?? profile.account?.email ?? '',
     role: user.role ?? profile.account?.role ?? 'user',
     status: Number(user.status ?? profile.account?.status ?? 0)
@@ -135,6 +147,32 @@ async function syncUserProfile(user, extra = {}) {
   profile.extensions = profile.extensions && typeof profile.extensions === 'object' ? profile.extensions : {};
   profile.meta = { ...(profile.meta || {}), ...extra };
   return writeProfile(profile);
+}
+
+function syncUserProfile(user, extra = {}) {
+  return withUserProfileLock(user.id, () => syncUserProfileUnlocked(user, extra));
+}
+
+async function currentUser(pool, userId) {
+  const [rows] = await pool.query('SELECT id, username, password, nickname, email, avatar, role, status, created_at FROM users WHERE id = ?', [userId]);
+  return rows[0] || null;
+}
+
+function syncUserProfileFromDatabase(pool, userId, extra = {}) {
+  return withUserProfileLock(userId, async () => {
+    const user = await currentUser(pool, userId);
+    return user ? syncUserProfileUnlocked(user, extra) : null;
+  });
+}
+
+function updateUserProfile(pool, userId, update) {
+  return withUserProfileLock(userId, async () => {
+    const user = await currentUser(pool, userId);
+    if (!user) return null;
+    const profile = await readProfile(userId) || await syncUserProfileUnlocked(user);
+    await update(profile);
+    return writeProfile(profile);
+  });
 }
 
 async function syncAllProfiles(pool) {
@@ -160,6 +198,8 @@ module.exports = {
   readProfile,
   writeProfile,
   syncUserProfile,
+  syncUserProfileFromDatabase,
+  updateUserProfile,
   syncAllProfiles,
   publicProfile
 };

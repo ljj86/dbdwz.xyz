@@ -5,6 +5,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+const { reserveStorage, directoryUsage, storageError } = require('./upload-storage');
 
 const execFileAsync = promisify(execFile);
 const resourceRoot = path.resolve(process.env.RESOURCE_ROOT || path.join(__dirname, '..', '..', '资源'));
@@ -12,7 +13,71 @@ const cacheDirectoryName = '_preview';
 const queue = [];
 const queuedKeys = new Set();
 const idleWaiters = [];
+const capacityWaiters = [];
+const queueOwners = new Map();
+const pendingSchedules = new Set();
+const schedulingFences = new Map();
+const PREVIEW_LIMITS = Object.freeze({ globalJobs: 64, accountJobs: 8, inputBytes: 500 * 1024 * 1024, outputBytes: 500 * 1024 * 1024 });
 let running = false;
+let lastOwner = null;
+let activeTask = null;
+
+function previewTimeout(name, fallback) {
+  const value = process.env[name] === undefined ? fallback : Number(process.env[name]);
+  if (!Number.isSafeInteger(value) || value < 1000 || value > 1800000) throw new Error(`${name} 必须为 1000-1800000 毫秒`);
+  return value;
+}
+async function runConverter(binary, args, options) {
+  let executable = binary;
+  let argumentsList = args;
+  if (process.platform === 'linux') {
+    // Inherit hard memory, CPU and output-file limits in converter descendants.
+    executable = '/usr/bin/prlimit';
+    argumentsList = ['--as=2147483648', `--cpu=${Math.ceil(options.timeout / 1000)}`, `--fsize=${PREVIEW_LIMITS.outputBytes}`, '--', binary, ...args];
+  }
+  const operation = execFileAsync(executable, argumentsList, { maxBuffer: options.maxBuffer, windowsHide: true, detached: process.platform !== 'win32' });
+  let stopping;
+  const stop = () => {
+    if (!stopping) {
+      if (process.platform === 'win32') stopping = execFileAsync('taskkill.exe', ['/PID', String(operation.child.pid), '/T', '/F'], { windowsHide: true }).catch(() => {});
+      else {
+        try { process.kill(-operation.child.pid, 'SIGKILL'); } catch { operation.child.kill('SIGKILL'); }
+        stopping = Promise.resolve();
+      }
+    }
+    return stopping;
+  };
+  if (options.task) {
+    options.task.stopConverter = stop;
+    if (options.task.cancelled) stop();
+  }
+  const deadline = setTimeout(stop, options.timeout);
+  let exceeded = false;
+  let checking = false;
+  const monitor = setInterval(async () => {
+    if (checking) return;
+    checking = true;
+    try {
+      if ((await directoryUsage(options.outputDirectory)).bytes > PREVIEW_LIMITS.outputBytes) {
+        exceeded = true;
+        stop();
+      }
+    } catch { stop(); }
+    finally { checking = false; }
+  }, 200);
+  try {
+    await operation;
+    if (exceeded || (await directoryUsage(options.outputDirectory)).bytes > PREVIEW_LIMITS.outputBytes) throw storageError('预览输出超过 500MiB');
+  } catch (error) {
+    await stop();
+    throw error;
+  } finally {
+    clearInterval(monitor);
+    clearTimeout(deadline);
+    if (stopping) await stopping;
+    if (options.task) options.task.stopConverter = null;
+  }
+}
 
 function resolveExecutable(configured, candidates, fallback) {
   if (configured) return configured;
@@ -170,7 +235,7 @@ function notifyIdle() {
   while (idleWaiters.length) idleWaiters.shift()();
 }
 
-async function convertOffice(descriptor, outputFile) {
+async function convertOffice(descriptor, outputFile, task) {
   const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dbdwz-office-'));
   const outputDirectory = path.join(temporaryRoot, 'out');
   const profileDirectory = path.join(temporaryRoot, 'profile');
@@ -179,23 +244,27 @@ async function convertOffice(descriptor, outputFile) {
     await fs.mkdir(profileDirectory, { recursive: true });
     const binary = libreOfficeBinary();
     if (binary) {
-      await execFileAsync(binary, [
+      await runConverter(binary, [
         `-env:UserInstallation=${pathToFileURL(profileDirectory).href}`,
         '--headless', '--nologo', '--nodefault', '--norestore',
         '--convert-to', 'pdf', '--outdir', outputDirectory, descriptor.sourcePath
       ], {
-        timeout: Number(process.env.OFFICE_PREVIEW_TIMEOUT_MS || 240000),
+        timeout: previewTimeout('OFFICE_PREVIEW_TIMEOUT_MS', 240000),
+        outputDirectory: temporaryRoot,
+        task,
         maxBuffer: 4 * 1024 * 1024,
         windowsHide: true
       });
     } else if (process.platform === 'win32') {
       const generated = path.join(outputDirectory, `${path.parse(descriptor.name).name}.pdf`);
       const helper = path.join(__dirname, '..', 'scripts', 'convert-office-windows.ps1');
-      await execFileAsync('powershell.exe', [
+      await runConverter('powershell.exe', [
         '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
         '-File', helper, descriptor.sourcePath, generated
       ], {
-        timeout: Number(process.env.OFFICE_PREVIEW_TIMEOUT_MS || 240000),
+        timeout: previewTimeout('OFFICE_PREVIEW_TIMEOUT_MS', 240000),
+        outputDirectory: temporaryRoot,
+        task,
         maxBuffer: 4 * 1024 * 1024,
         windowsHide: true
       });
@@ -206,7 +275,9 @@ async function convertOffice(descriptor, outputFile) {
     if (generatedFiles.length !== 1) throw new Error(`LibreOffice 未生成唯一 PDF（实际 ${generatedFiles.length} 个）`);
     const generated = path.join(outputDirectory, generatedFiles[0]);
     const stat = await fs.stat(generated);
+    if (task.cancelled) return;
     if (!stat.size) throw new Error('LibreOffice 生成了空 PDF');
+    if (stat.size > PREVIEW_LIMITS.outputBytes) throw storageError('预览输出超过 500MiB');
     await fs.mkdir(descriptor.cachePath, { recursive: true });
     await fs.rm(path.join(descriptor.cachePath, outputFile), { force: true });
     await fs.copyFile(generated, path.join(descriptor.cachePath, outputFile));
@@ -215,52 +286,67 @@ async function convertOffice(descriptor, outputFile) {
   }
 }
 
-async function convertVideo(descriptor, outputFile) {
+async function convertVideo(descriptor, outputFile, task) {
   await fs.mkdir(descriptor.cachePath, { recursive: true });
   const target = path.join(descriptor.cachePath, outputFile);
-  const temporary = `${target}.${process.pid}.tmp.mp4`;
+  const temporaryRoot = await fs.mkdtemp(path.join(descriptor.cachePath, '.job-'));
+  const temporary = path.join(temporaryRoot, outputFile);
   const binary = process.env.FFMPEG_BIN || 'ffmpeg';
   try {
-    await execFileAsync(binary, [
+    await runConverter(binary, [
       '-y', '-i', descriptor.sourcePath,
       '-map', '0:v:0?', '-map', '0:a:0?',
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-pix_fmt', 'yuv420p', '-threads', '1',
-      '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', temporary
+      '-c:a', 'aac', '-b:a', '128k', '-fs', String(PREVIEW_LIMITS.outputBytes), '-movflags', '+faststart', temporary
     ], {
-      timeout: Number(process.env.VIDEO_PREVIEW_TIMEOUT_MS || 1800000),
+      timeout: previewTimeout('VIDEO_PREVIEW_TIMEOUT_MS', 300000),
+      outputDirectory: temporaryRoot,
+      task,
       maxBuffer: 8 * 1024 * 1024,
       windowsHide: true
     });
     const stat = await fs.stat(temporary);
+    if (task.cancelled) return;
     if (!stat.size) throw new Error('FFmpeg 生成了空视频');
     await fs.rm(target, { force: true });
     await fs.rename(temporary, target);
   } finally {
-    await fs.rm(temporary, { force: true });
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
   }
 }
 
 async function processTask(task) {
   let descriptor;
+  let reservation;
   try {
     descriptor = await sourceDescriptor(task.folder, task.filename);
+    if (descriptor.size > PREVIEW_LIMITS.inputBytes) throw storageError('预览输入超过 500MiB，请下载查看');
+    reservation = await reserveStorage(task.userId, { bytes: PREVIEW_LIMITS.outputBytes * 2, files: 10, isCancelled: () => task.cancelled });
     const outputFile = `${descriptor.key}${descriptor.classification.outputExtension || ''}`;
     // 转换工具没有可靠的逐文件百分比回调，不伪造中间进度；只报告处理中和完成。
+    if (task.cancelled) return;
     await writeState(descriptor, { status: 'processing', progress: 0, outputFile });
-    if (descriptor.classification.mode === 'libreoffice') await convertOffice(descriptor, outputFile);
-    else if (descriptor.classification.mode === 'ffmpeg') await convertVideo(descriptor, outputFile);
-    await writeState(descriptor, { status: 'ready', progress: 100, outputFile, error: '' });
+    if (task.cancelled) return;
+    if (descriptor.classification.mode === 'libreoffice') await convertOffice(descriptor, outputFile, task);
+    else if (descriptor.classification.mode === 'ffmpeg') await convertVideo(descriptor, outputFile, task);
+    if (!task.cancelled) await writeState(descriptor, { status: 'ready', progress: 100, outputFile, error: '' });
   } catch (error) {
     if (descriptor && descriptor.classification.mode === 'libreoffice' && error && error.code === 'ENOENT') {
       error.message = '未找到 Office 转换程序。Linux 请安装 LibreOffice；Windows 请安装 LibreOffice 或 WPS，并可通过 LIBREOFFICE_BIN 指定完整路径';
     }
-    if (descriptor) {
+    if (descriptor && !task.cancelled) {
       await writeState(descriptor, {
         status: 'failed', progress: 0,
         error: String(error && error.message ? error.message : error).slice(0, 1000)
       }).catch(() => {});
     }
     console.error(`[preview] ${task.folder}/${task.filename}:`, error.message || error);
+  } finally {
+    if (descriptor && task.cancelled) {
+      await fs.rm(descriptor.statePath, { force: true }).catch(() => {});
+      await fs.rm(path.join(descriptor.cachePath, `${descriptor.key}${descriptor.classification.outputExtension || ''}`), { force: true }).catch(() => {});
+    }
+    if (reservation) reservation.release();
   }
 }
 
@@ -268,43 +354,85 @@ async function drainQueue() {
   if (running) return;
   running = true;
   while (queue.length) {
-    const task = queue.shift();
+    const next = queue.findIndex(task => task.userId !== lastOwner);
+    const task = queue.splice(next < 0 ? 0 : next, 1)[0];
+    activeTask = task;
+    lastOwner = task.userId;
     try {
       await processTask(task);
     } finally {
       queuedKeys.delete(task.queueKey);
+      queueOwners.delete(task.queueKey);
+      activeTask = null;
+      task.resolveSettled();
+      while (capacityWaiters.length) capacityWaiters.shift()();
     }
   }
   running = false;
   notifyIdle();
 }
 
-function enqueue(folder, filename) {
-  const queueKey = `${folder}\u0000${filename}`;
-  if (queuedKeys.has(queueKey)) return;
-  queuedKeys.add(queueKey);
-  queue.push({ folder, filename, queueKey });
+function enqueue(folder, filename, userId, queueKey) {
+  let resolveSettled;
+  const settled = new Promise(resolve => { resolveSettled = resolve; });
+  queue.push({ folder, filename, userId, queueKey, settled, resolveSettled });
   setImmediate(() => drainQueue().catch((error) => console.error('[preview queue]', error)));
 }
 
-async function scheduleFilePreview(folderName, filename, options = {}) {
+function scheduleFilePreview(folderName, filename, options = {}) {
+  const context = { folder: cleanFolder(folderName), filename: cleanName(filename), cancelled: false };
+  if (schedulingFences.has(context.folder) || schedulingFences.has(`${context.folder}\u0000${context.filename}`)) return Promise.reject(new Error('资料正在移动或删除'));
+  pendingSchedules.add(context);
+  context.settled = scheduleFilePreviewNow(folderName, filename, options, context).finally(async () => {
+    if (context.cancelled) await fs.rm(folderPaths(context.folder, context.filename).statePath, { force: true }).catch(() => {});
+    pendingSchedules.delete(context);
+  });
+  return context.settled;
+}
+async function scheduleFilePreviewNow(folderName, filename, options, context) {
   const descriptor = await sourceDescriptor(folderName, filename);
+  if (context.cancelled) throw new Error('预览任务已取消');
   const existing = await readJson(descriptor.statePath);
   if (!options.force && existing && existing.signature === descriptor.signature && existing.status === 'ready' && await outputExists(descriptor, existing)) {
     return existing;
   }
   if (['direct', 'text', 'unsupported'].includes(descriptor.classification.mode)) {
-    return writeState(descriptor, {
+    const state = await writeState(descriptor, {
       status: descriptor.classification.mode === 'unsupported' ? 'unsupported' : 'ready',
       progress: 100,
       outputFile: '',
       error: ''
     });
+    if (context.cancelled) throw new Error('预览任务已取消');
+    return state;
   }
+  const userId = Number(options.userId);
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('预览任务缺少有效用户');
+  const queueKey = `${descriptor.folder}\u0000${descriptor.name}`;
+  if (queuedKeys.has(queueKey)) return existing || { status: 'queued', progress: 0 };
+  const full = () => queuedKeys.size >= PREVIEW_LIMITS.globalJobs || [...queueOwners.values()].filter(owner => owner === userId).length >= PREVIEW_LIMITS.accountJobs;
+  while (full()) {
+    if (context.cancelled) throw new Error('预览任务已取消');
+    if (!options.waitForCapacity) return writeState(descriptor, { status: 'failed', progress: 0, error: '预览队列已满，原文件已保存；请稍后补建预览' });
+    await new Promise(resolve => capacityWaiters.push(resolve));
+  }
+  if (context.cancelled) throw new Error('预览任务已取消');
+  // Reserve synchronously before the asynchronous state write; concurrent callers
+  // cannot all observe the same free slot.
+  queuedKeys.add(queueKey);
+  queueOwners.set(queueKey, userId);
   const outputFile = `${descriptor.key}${descriptor.classification.outputExtension}`;
-  const state = await writeState(descriptor, { status: 'queued', progress: 0, outputFile, error: '' });
-  enqueue(descriptor.folder, descriptor.name);
-  return state;
+  try {
+    const state = await writeState(descriptor, { status: 'queued', progress: 0, outputFile, userId, error: '' });
+    if (context.cancelled) throw new Error('预览任务已取消');
+    enqueue(descriptor.folder, descriptor.name, userId, queueKey);
+    return state;
+  } catch (error) {
+    queuedKeys.delete(queueKey);
+    queueOwners.delete(queueKey);
+    while (capacityWaiters.length) capacityWaiters.shift()();
+    throw error;
+  }
 }
 
 async function scheduleMaterialPreviews(folderName, files, options = {}) {
@@ -335,49 +463,78 @@ async function getPreviewState(folderName, filename) {
 }
 
 async function removeFilePreview(folderName, filename) {
+  const release = await cancelMaterialPreviews(folderName, [filename]);
+  try {
   const paths = folderPaths(folderName, filename);
   const state = await readJson(paths.statePath);
   if (state && state.outputFile) await fs.rm(path.join(paths.cachePath, path.basename(state.outputFile)), { force: true });
+  const extension = classifyFile(paths.name).outputExtension;
+  if (extension) await fs.rm(path.join(paths.cachePath, `${paths.key}${extension}`), { force: true });
   await fs.rm(paths.statePath, { force: true });
+  } finally { release(); }
+}
+
+async function cancelMaterialPreviews(folderName, filenames = null) {
+  const folder = cleanFolder(folderName);
+  const names = filenames && new Set(filenames.map(cleanName));
+  const keys = names ? [...names].map(name => `${folder}\u0000${name}`) : [folder];
+  for (const key of keys) schedulingFences.set(key, (schedulingFences.get(key) || 0) + 1);
+  const matches = task => task.folder === folder && (!names || names.has(task.filename));
+  const waits = [];
+  for (const context of pendingSchedules) {
+    if (matches(context)) { context.cancelled = true; waits.push(context.settled); }
+  }
+  for (let index = queue.length - 1; index >= 0; index -= 1) {
+    const task = queue[index];
+    if (!matches(task)) continue;
+    queue.splice(index, 1);
+    queuedKeys.delete(task.queueKey);
+    queueOwners.delete(task.queueKey);
+    task.resolveSettled();
+    waits.push(fs.rm(folderPaths(task.folder, task.filename).statePath, { force: true }));
+  }
+  if (activeTask && matches(activeTask)) {
+    activeTask.cancelled = true;
+    if (activeTask.stopConverter) activeTask.stopConverter();
+    waits.push(activeTask.settled);
+  }
+  while (capacityWaiters.length) capacityWaiters.shift()();
+  await Promise.allSettled(waits);
+  notifyIdle();
+  return () => {
+    for (const key of keys) {
+      const remaining = schedulingFences.get(key) - 1;
+      if (remaining) schedulingFences.set(key, remaining);
+      else schedulingFences.delete(key);
+    }
+  };
 }
 
 async function backfillAllPreviews(options = {}) {
-  let folders = [];
-  try {
-    folders = await fs.readdir(resourceRoot, { withFileTypes: true });
-  } catch (error) {
-    if (error.code === 'ENOENT') return 0;
-    throw error;
-  }
+  const { getPool } = require('../db');
+  const [files] = await getPool().query('SELECT m.folder, m.user_id, f.filename FROM meeting_materials m JOIN meeting_material_files f ON f.material_id = m.id WHERE m.is_published = 1 ORDER BY m.id, f.id');
   let count = 0;
-  for (const folderEntry of folders) {
-    if (!folderEntry.isDirectory() || folderEntry.name.startsWith('.')) continue;
-    const folderPath = path.join(resourceRoot, folderEntry.name);
-    const entries = await fs.readdir(folderPath, { withFileTypes: true });
-    const files = entries
-      .filter((entry) => entry.isFile() && !['metadata.json', '资料说明.txt'].includes(entry.name))
-      .map((entry) => entry.name);
-    count += files.length;
-    await scheduleMaterialPreviews(folderEntry.name, files, options);
+  for (const file of files) {
+    await scheduleMaterialPreviews(file.folder, [file.filename], { ...options, userId: file.user_id, waitForCapacity: true });
+    count += 1;
   }
   return count;
 }
 
 async function resumePendingPreviews() {
-  let folders = [];
-  try { folders = await fs.readdir(resourceRoot, { withFileTypes: true }); } catch { return; }
-  for (const folderEntry of folders) {
-    if (!folderEntry.isDirectory()) continue;
-    const cachePath = path.join(resourceRoot, folderEntry.name, cacheDirectoryName);
-    let states = [];
-    try { states = await fs.readdir(cachePath); } catch { continue; }
-    for (const stateFile of states.filter((name) => name.endsWith('.json'))) {
-      const state = await readJson(path.join(cachePath, stateFile));
+  // Feed durable jobs with bounded admission without blocking HTTP startup.
+  (async () => {
+    const { getPool } = require('../db');
+    const [files] = await getPool().query('SELECT m.folder, m.user_id, f.filename FROM meeting_materials m JOIN meeting_material_files f ON f.material_id = m.id WHERE m.is_published = 1 ORDER BY m.id, f.id');
+    for (const file of files) {
+      const descriptor = await sourceDescriptor(file.folder, file.filename).catch(() => null);
+      if (!descriptor) continue;
+      const state = await readJson(descriptor.statePath);
       if (state && ['queued', 'processing'].includes(state.status)) {
-        scheduleFilePreview(folderEntry.name, state.filename, { force: true }).catch(() => {});
+        await scheduleFilePreview(file.folder, file.filename, { force: true, userId: file.user_id, waitForCapacity: true }).catch(() => {});
       }
     }
-  }
+  })().catch(error => console.error('[preview resume]', error.message));
 }
 
 function waitForIdle() {
@@ -386,7 +543,7 @@ function waitForIdle() {
 }
 
 function getQueueStatus() {
-  return { running, waiting: queue.length, concurrency: 1 };
+  return { running, waiting: queue.length, concurrency: 1, capacity: PREVIEW_LIMITS.globalJobs, accountCapacity: PREVIEW_LIMITS.accountJobs };
 }
 
 module.exports = {
@@ -397,8 +554,10 @@ module.exports = {
   scheduleMaterialPreviews,
   getPreviewState,
   removeFilePreview,
+  cancelMaterialPreviews,
   backfillAllPreviews,
   resumePendingPreviews,
   waitForIdle,
-  getQueueStatus
+  getQueueStatus,
+  PREVIEW_LIMITS
 };

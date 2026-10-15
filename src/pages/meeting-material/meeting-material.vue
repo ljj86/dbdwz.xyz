@@ -279,7 +279,14 @@ export default {
         status: 'pending',
         progress: 0
       })))
-      if (unique.length && !this.isEditMode) this.$nextTick(() => this.files.filter(file => file.status === 'pending').forEach(file => this.stageFile(file)))
+      if (unique.length && !this.isEditMode) this.$nextTick(() => this.pumpStaging())
+    },
+    pumpStaging() {
+      let available = 2 - this.files.filter(file => file.status === 'uploading').length
+      for (const file of this.files) {
+        if (available <= 0) break
+        if (file.status === 'pending' && file.raw) { available -= 1; this.stageFile(file) }
+      }
     },
     stageFile(file) {
       if (!file || !file.raw || this.isEditMode || file.status === 'uploading') return
@@ -310,7 +317,10 @@ export default {
           uni.showToast({ title: error.message || '临时上传失败', icon: 'none' })
         }
       }
-      request.onloadend = () => { if (file.request === request) file.request = null }
+      request.onloadend = () => {
+        if (file.request === request) file.request = null
+        this.pumpStaging()
+      }
       request.send(form)
     },
     removeFile(index) {
@@ -495,7 +505,8 @@ export default {
       if (this.files.some(file => file.status === 'uploading' || file.status === 'pending')) return uni.showToast({ title: '文件正在进入临时区，请稍候', icon: 'none' })
       const failedFiles = this.files.filter(file => file.status === 'failed')
       if (failedFiles.length) {
-        failedFiles.forEach(file => this.stageFile(file))
+        failedFiles.forEach(file => { file.status = 'pending' })
+        this.pumpStaging()
         return uni.showToast({ title: '正在重试失败文件', icon: 'none' })
       }
       this.finalizeUpload()

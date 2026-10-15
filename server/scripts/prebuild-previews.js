@@ -6,12 +6,16 @@ const {
 } = require('../services/preview-storage');
 
 async function main() {
+  const { init, getPool } = require('../db');
+  await init();
+  try {
   const force = process.argv.includes('--force');
   console.log(`[preview] 扫描目录：${resourceRoot}`);
   const count = await backfillAllPreviews({ force });
   console.log(`[preview] 已登记 ${count} 个文件，转换队列并发数：${getQueueStatus().concurrency}`);
   await waitForIdle();
   console.log('[preview] 全部预览处理完成');
+  } finally { await getPool().end(); }
 }
 
 main().catch((error) => {

@@ -1,14 +1,15 @@
 const express = require('express');
-const multer = require('multer');
 const fs = require('fs/promises');
 const path = require('path');
-const os = require('os');
+const crypto = require('crypto');
 const { authMiddleware } = require('../middleware/auth');
 const { getPool } = require('../db');
+const { avatarVersion } = require('../services/avatar');
 const {
   scheduleMaterialPreviews,
   getPreviewState,
   removeFilePreview,
+  cancelMaterialPreviews,
   getQueueStatus
 } = require('../services/preview-storage');
 const {
@@ -21,12 +22,30 @@ const {
   cleanupExpiredTrash
 } = require('../services/trash-storage');
 const { LIMITS: ARCHIVE_LIMITS, extractZip } = require('../services/archive-extractor');
+const { LIMITS: STORAGE_LIMITS, resourceRoot, stagingRoot: STAGING_ROOT, reserveStorage, withUserLock, materialUpload, storageError, cleanupExpiredIncoming } = require('../services/upload-storage');
 
 const router = express.Router();
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 1024 * 1024 * 500, files: 50 }
-});
+function assertActive(req) {
+  if (req.aborted || req.materialMutationCancelled || req.res.destroyed) throw storageError('资料操作已取消', 400);
+}
+const mutation = handler => async (req, res) => {
+  const cancelled = () => { if (!res.writableFinished) req.materialMutationCancelled = true; };
+  req.once('aborted', cancelled);
+  res.once('close', cancelled);
+  try {
+    await withUserLock(req.user.id, () => {
+      assertActive(req);
+      return handler(req, res);
+    });
+  } catch (error) {
+    if (!res.destroyed && !res.headersSent) res.status(error.status || 500).json({ code: error.status || 500, message: error.message || '资料操作失败' });
+  } finally {
+    req.materialMutationSettled = true;
+    if (req.materialUploadCleanup) await req.materialUploadCleanup();
+    req.removeListener('aborted', cancelled);
+    res.removeListener('close', cancelled);
+  }
+};
 
 function pad(value) {
   return String(value).padStart(2, '0');
@@ -41,7 +60,8 @@ function safeFilename(name, fallback) {
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
     .replace(/[. ]+$/g, '')
     .slice(0, 180);
-  return cleaned || fallback;
+  const filename = cleaned || fallback;
+  return ['_preview', 'metadata.json', '资料说明.txt'].includes(filename.toLowerCase()) ? `附件_${filename}` : filename;
 }
 
 async function uniqueDirectory(root, baseName) {
@@ -64,9 +84,9 @@ function isTester(user) {
 }
 
 // 第一阶段：文件只进入系统临时目录，不创建正式资料和数据库记录。
-router.post('/stage', authMiddleware, upload.single('file'), async (req, res) => {
+router.post('/stage', authMiddleware, materialUpload('file'), mutation(async (req, res) => {
+  let writtenPath;
   try {
-    await cleanupExpiredStaging();
     const uploadTaskId = validTemporaryId(req.body.uploadTaskId);
     const clientFileId = validTemporaryId(req.body.clientFileId);
     const file = req.file;
@@ -78,22 +98,28 @@ router.post('/stage', authMiddleware, upload.single('file'), async (req, res) =>
     const replacedFiles = previous
       ? stage.files.filter(item => item.clientFileId === clientFileId || item.parentClientFileId === clientFileId)
       : [];
-    await Promise.all(replacedFiles.map(item => fs.rm(path.join(stage.directory, path.basename(item.storedName)), { force: true }).catch(() => {})));
-    const storedName = `${clientFileId}-${originalName}`;
+    const storedName = `${clientFileId}-${crypto.randomUUID()}-${originalName}`;
     await fs.mkdir(stage.directory, { recursive: true });
-    await fs.writeFile(path.join(stage.directory, storedName), file.buffer);
+    writtenPath = path.join(stage.directory, storedName);
+    await fs.rename(file.path, writtenPath);
+    assertActive(req);
     const files = stage.files.filter(item => item.clientFileId !== clientFileId && item.parentClientFileId !== clientFileId);
     files.push({ clientFileId, originalName, storedName, size: Number(file.size) || 0, mimeType: file.mimetype || '' });
+    if (files.length > STORAGE_LIMITS.taskFiles) throw storageError('一个上传任务最多保留 200 个文件');
     await writeStaging(stage.directory, uploadTaskId, files);
+    writtenPath = null;
+    await Promise.all(replacedFiles.map(item => fs.rm(path.join(stage.directory, path.basename(item.storedName)), { force: true }).catch(() => {})));
     res.json({ code: 200, message: '文件已进入临时区', data: { clientFileId, name: originalName, size: Number(file.size) || 0 } });
   } catch (error) {
+    if (writtenPath) await fs.rm(writtenPath, { force: true }).catch(() => {});
     console.error('临时上传失败:', error);
-    res.status(500).json({ code: 500, message: '临时上传失败' });
+    res.status(error.status || 500).json({ code: error.status || 500, message: error.status ? error.message : '临时上传失败' });
   }
-});
+}));
 
 // ZIP 在线解压：结果只写入当前用户、当前上传任务、当前压缩包对应的临时清单。
-router.post('/stage/:uploadTaskId/:clientFileId/extract', authMiddleware, async (req, res) => {
+router.post('/stage/:uploadTaskId/:clientFileId/extract', authMiddleware, mutation(async (req, res) => {
+  let reservation;
   try {
     const uploadTaskId = validTemporaryId(req.params.uploadTaskId);
     const clientFileId = validTemporaryId(req.params.clientFileId);
@@ -103,11 +129,14 @@ router.post('/stage/:uploadTaskId/:clientFileId/extract', authMiddleware, async 
     if (!source) return res.status(404).json({ code: 404, message: '压缩包临时文件不存在' });
     if (path.extname(source.originalName).toLowerCase() !== '.zip') return res.status(400).json({ code: 400, message: '当前只支持在线解压 ZIP' });
     if (Number(source.size) > ARCHIVE_LIMITS.archiveBytes) return res.status(413).json({ code: 413, message: 'ZIP 不能超过 50MB' });
+    reservation = await reserveStorage(req.user.id, { bytes: ARCHIVE_LIMITS.totalBytes, files: ARCHIVE_LIMITS.fileCount, isCancelled: () => req.aborted || req.materialMutationCancelled || res.destroyed });
 
     const oldChildren = stage.files.filter(file => file.parentClientFileId === clientFileId);
     await Promise.all(oldChildren.map(file => fs.rm(path.join(stage.directory, path.basename(file.storedName)), { force: true }).catch(() => {})));
     const baseFiles = stage.files.filter(file => file.parentClientFileId !== clientFileId);
+    if (baseFiles.length + ARCHIVE_LIMITS.fileCount > STORAGE_LIMITS.taskFiles) throw storageError('任务剩余文件额度不足以在线解压');
     const usedNames = new Set(baseFiles.map(file => String(file.originalName || '').toLowerCase()));
+    assertActive(req);
     let extracted;
     try {
       extracted = await extractZip({
@@ -117,7 +146,9 @@ router.post('/stage/:uploadTaskId/:clientFileId/extract', authMiddleware, async 
         parentClientFileId: clientFileId,
         usedNames
       });
+      assertActive(req);
     } catch (error) {
+      if (extracted) await Promise.all(extracted.map(file => fs.rm(path.join(stage.directory, file.storedName), { force: true }).catch(() => {})));
       await writeStaging(stage.directory, uploadTaskId, baseFiles);
       throw error;
     }
@@ -144,11 +175,13 @@ router.post('/stage/:uploadTaskId/:clientFileId/extract', authMiddleware, async 
       }
     });
   } catch (error) {
-    const status = error.code === 'ARCHIVE_BUSY' ? 429 : 400;
+    const status = error.status || (error.code === 'ARCHIVE_BUSY' ? 429 : 400);
     console.warn('在线解压失败:', error.message);
     res.status(status).json({ code: status, message: error.message || '在线解压失败' });
+  } finally {
+    if (reservation) reservation.release();
   }
-});
+}));
 
 router.get('/stage/:uploadTaskId', authMiddleware, async (req, res) => {
   try {
@@ -161,7 +194,7 @@ router.get('/stage/:uploadTaskId', authMiddleware, async (req, res) => {
   }
 });
 
-router.delete('/stage/:uploadTaskId/:clientFileId', authMiddleware, async (req, res) => {
+router.delete('/stage/:uploadTaskId/:clientFileId', authMiddleware, mutation(async (req, res) => {
   try {
     const uploadTaskId = validTemporaryId(req.params.uploadTaskId);
     const clientFileId = validTemporaryId(req.params.clientFileId);
@@ -180,9 +213,9 @@ router.delete('/stage/:uploadTaskId/:clientFileId', authMiddleware, async (req, 
   } catch (error) {
     res.status(500).json({ code: 500, message: '删除临时文件失败' });
   }
-});
+}));
 
-router.delete('/stage/:uploadTaskId', authMiddleware, async (req, res) => {
+router.delete('/stage/:uploadTaskId', authMiddleware, mutation(async (req, res) => {
   try {
     const uploadTaskId = validTemporaryId(req.params.uploadTaskId);
     if (!uploadTaskId) return res.status(400).json({ code: 400, message: '临时上传任务无效' });
@@ -191,11 +224,13 @@ router.delete('/stage/:uploadTaskId', authMiddleware, async (req, res) => {
   } catch (error) {
     res.status(500).json({ code: 500, message: '清理临时上传失败' });
   }
-});
+}));
 
 // 第二阶段：用户明确点击“上传资料”后，才写入正式资源目录和数据库。
-router.post('/finalize', authMiddleware, async (req, res) => {
+router.post('/finalize', authMiddleware, mutation(async (req, res) => {
   let createdDirectory = null;
+  let reservation;
+  let committed = false;
   const uploadTaskId = validTemporaryId(req.body.uploadTaskId);
   const lockKey = `${req.user.id}:${uploadTaskId}`;
   try {
@@ -204,13 +239,14 @@ router.post('/finalize', authMiddleware, async (req, res) => {
     finalizingTasks.add(lockKey);
     const stage = await readStaging(req.user.id, uploadTaskId);
     if (!stage.files.length) return res.status(400).json({ code: 400, message: '临时文件不存在或已清理，请重新选择' });
+    if (stage.files.length > STORAGE_LIMITS.materialFiles) throw storageError('一份资料最多包含 200 个文件');
+    reservation = await reserveStorage(req.user.id, { bytes: stage.files.reduce((sum, file) => sum + Number(file.size), 0), files: stage.files.length + 2, materials: 1, isCancelled: () => req.aborted || req.materialMutationCancelled || res.destroyed });
 
     const title = String(req.body.title || '').trim() || stage.files[0].originalName.replace(/\.[^.]+$/, '') || '组会资料';
     const description = String(req.body.description || '').trim();
     if (title.length > 120) return res.status(400).json({ code: 400, message: '标题不能超过 120 个字符' });
     if (description.length > 5000) return res.status(400).json({ code: 400, message: '资料说明不能超过 5000 个字符' });
 
-    const resourceRoot = path.resolve(__dirname, '..', '..', '资源');
     await fs.mkdir(resourceRoot, { recursive: true });
     const folder = await uniqueDirectory(resourceRoot, timestampName());
     createdDirectory = folder.target;
@@ -227,6 +263,7 @@ router.post('/finalize', authMiddleware, async (req, res) => {
       }
       usedNames.add(filename.toLowerCase());
       await fs.copyFile(path.join(stage.directory, path.basename(file.storedName)), path.join(folder.target, filename));
+      assertActive(req);
       savedFiles.push({ name: filename, size: Number(file.size) || 0, mimeType: file.mimeType || '' });
     }
 
@@ -235,9 +272,11 @@ router.post('/finalize', authMiddleware, async (req, res) => {
     await fs.writeFile(path.join(folder.target, '资料说明.txt'), note, 'utf8');
     await fs.writeFile(path.join(folder.target, 'metadata.json'), JSON.stringify({ folder: folder.name, title, description, uploader: { id: req.user.id, username: req.user.username }, uploadedAt: now.toISOString(), updatedAt: now.toISOString(), files: savedFiles.map(file => ({ name: file.name, size: file.size })) }, null, 2), 'utf8');
 
+    assertActive(req);
     const connection = await getPool().getConnection();
     let materialId;
     try {
+      assertActive(req);
       await connection.beginTransaction();
       const [materialResult] = await connection.query(
         'INSERT INTO meeting_materials (folder, user_id, title, description, tester_only, uploaded_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())',
@@ -247,32 +286,37 @@ router.post('/finalize', authMiddleware, async (req, res) => {
       for (const file of savedFiles) {
         await connection.query('INSERT INTO meeting_material_files (material_id, filename, file_size, mime_type) VALUES (?, ?, ?, ?)', [materialId, file.name, file.size, file.mimeType]);
       }
+      assertActive(req);
       await connection.commit();
+      committed = true;
     } catch (error) {
       await connection.rollback();
       throw error;
     } finally {
       connection.release();
     }
-    await fs.rm(stage.directory, { recursive: true, force: true });
-    const previews = await scheduleMaterialPreviews(folder.name, savedFiles);
+    await fs.rm(stage.directory, { recursive: true, force: true }).catch(error => console.warn('临时区清理失败:', error.message));
+    const previews = await scheduleMaterialPreviews(folder.name, savedFiles, { userId: req.user.id });
     res.json({ code: 200, message: '资料已正式保存，预览正在后台生成', data: { id: materialId, folder: folder.name, files: savedFiles, previews } });
   } catch (error) {
-    if (createdDirectory) await fs.rm(createdDirectory, { recursive: true, force: true }).catch(() => {});
+    if (createdDirectory && !committed) await fs.rm(createdDirectory, { recursive: true, force: true }).catch(() => {});
     console.error('正式保存资料失败:', error);
-    res.status(500).json({ code: 500, message: error.message || '资料保存失败' });
+    res.status(error.status || 500).json({ code: error.status || 500, message: error.message || '资料保存失败' });
   } finally {
     finalizingTasks.delete(lockKey);
+    if (reservation) reservation.release();
   }
-});
+}));
 
-router.post('/upload', authMiddleware, upload.array('files', 50), async (req, res) => {
+router.post('/upload', authMiddleware, materialUpload('files', true), mutation(async (req, res) => {
   let createdDirectory = null;
+  let reservation;
+  let committed = false;
   try {
     const files = req.files || [];
     if (!files.length) return res.json({ code: 400, message: '请选择需要上传的资料文件' });
+    reservation = await reserveStorage(req.user.id, { bytes: files.reduce((sum, file) => sum + file.size, 0), files: files.length + 2, materials: 1, isCancelled: () => req.aborted || req.materialMutationCancelled || res.destroyed });
 
-    const resourceRoot = path.resolve(__dirname, '..', '..', '资源');
     await fs.mkdir(resourceRoot, { recursive: true });
     const folder = await uniqueDirectory(resourceRoot, timestampName());
     createdDirectory = folder.target;
@@ -289,7 +333,8 @@ router.post('/upload', authMiddleware, upload.array('files', 50), async (req, re
         duplicateIndex += 1;
       }
       usedNames.add(filename.toLowerCase());
-      await fs.writeFile(path.join(folder.target, filename), file.buffer);
+      await fs.copyFile(file.path, path.join(folder.target, filename));
+      assertActive(req);
       savedFiles.push({ name: filename, size: file.size });
     }
 
@@ -314,8 +359,10 @@ router.post('/upload', authMiddleware, upload.array('files', 50), async (req, re
       files: savedFiles
     }, null, 2), 'utf8');
 
+    assertActive(req);
     const connection = await getPool().getConnection();
     try {
+      assertActive(req);
       await connection.beginTransaction();
       const [materialResult] = await connection.query(
         'INSERT INTO meeting_materials (folder, user_id, title, description, tester_only, uploaded_at) VALUES (?, ?, ?, ?, ?, NOW())',
@@ -327,7 +374,9 @@ router.post('/upload', authMiddleware, upload.array('files', 50), async (req, re
           [materialResult.insertId, savedFiles[index].name, savedFiles[index].size, files[index].mimetype || '']
         );
       }
+      assertActive(req);
       await connection.commit();
+      committed = true;
     } catch (error) {
       await connection.rollback();
       throw error;
@@ -335,29 +384,31 @@ router.post('/upload', authMiddleware, upload.array('files', 50), async (req, re
       connection.release();
     }
 
-    const previews = await scheduleMaterialPreviews(folder.name, savedFiles);
+    const previews = await scheduleMaterialPreviews(folder.name, savedFiles, { userId: req.user.id });
     res.json({
       code: 200,
       message: '资料上传成功，预览正在后台生成',
       data: { folder: folder.name, files: savedFiles, previews }
     });
   } catch (error) {
-    if (createdDirectory) await fs.rm(createdDirectory, { recursive: true, force: true }).catch(() => {});
+    if (createdDirectory && !committed) await fs.rm(createdDirectory, { recursive: true, force: true }).catch(() => {});
     console.error('资料上传失败:', error);
-    res.json({ code: 500, message: '资料保存失败' });
+    res.status(error.status || 500).json({ code: error.status || 500, message: error.status ? error.message : '资料保存失败' });
+  } finally {
+    if (reservation) reservation.release();
   }
-});
+}));
 
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const [users] = await getPool().query(
-      "SELECT id, username, nickname, CASE WHEN COALESCE(avatar, '') <> '' THEN 1 ELSE 0 END AS has_avatar, UNIX_TIMESTAMP(updated_at) AS avatar_version FROM users WHERE role = 'user' ORDER BY CONVERT(nickname USING gbk), id"
+      "SELECT id, username, nickname, CASE WHEN COALESCE(avatar, '') <> '' THEN 1 ELSE 0 END AS has_avatar, SUBSTRING(SHA2(COALESCE(avatar, ''), 256), 1, 24) AS avatar_version FROM users WHERE role = 'user' ORDER BY CONVERT(nickname USING gbk), id"
     );
     const [materialRows] = await getPool().query(`
       SELECT m.id, m.folder, m.user_id, m.title, m.description, m.ebook_url, m.tester_only, m.uploaded_at, m.updated_at,
              u.username, u.nickname, COALESCE(u.materials_hidden, 0) AS uploader_hidden,
              CASE WHEN COALESCE(u.avatar, '') <> '' THEN 1 ELSE 0 END AS has_avatar,
-             UNIX_TIMESTAMP(u.updated_at) AS avatar_version
+             SUBSTRING(SHA2(COALESCE(u.avatar, ''), 256), 1, 24) AS avatar_version
       FROM meeting_materials m
       JOIN users u ON u.id = m.user_id
       WHERE m.is_published = 1 AND (m.tester_only = 0 OR ? = 1)
@@ -378,7 +429,7 @@ router.get('/', authMiddleware, async (req, res) => {
       });
     });
     const avatarUrl = (id, hasAvatar, version) => hasAvatar
-      ? `${req.protocol}://${req.get('host')}/api/auth/avatar/${id}?v=${version || 0}`
+      ? `${req.protocol}://${req.get('host')}/api/auth/avatar/${id}?v=${avatarVersion(version)}`
       : '';
     const publicUsers = users.map(user => ({
       id: user.id,
@@ -480,7 +531,7 @@ router.put('/trash/:id', authMiddleware, async (req, res) => {
   }
 });
 
-router.post('/trash/:id/restore', authMiddleware, async (req, res) => {
+router.post('/trash/:id/restore', authMiddleware, mutation(async (req, res) => {
   let material = null;
   let restored = null;
   try {
@@ -496,15 +547,17 @@ router.post('/trash/:id/restore', authMiddleware, async (req, res) => {
       'UPDATE meeting_materials SET folder = ?, is_published = 1, deleted_at = NULL, delete_expires_at = NULL WHERE id = ? AND user_id = ?',
       [restored.folder, material.id, req.user.id]
     );
+    const [files] = await getPool().query('SELECT filename FROM meeting_material_files WHERE material_id = ? ORDER BY id', [material.id]);
+    await scheduleMaterialPreviews(restored.folder, files.map(file => file.filename), { userId: req.user.id });
     res.json({ code: 200, message: '资料已重新上架' });
   } catch (error) {
     if (material && restored) await rollbackRestore(material, restored).catch(() => {});
     console.error('重新上架失败:', error);
     res.status(500).json({ code: 500, message: error.message || '重新上架失败' });
   }
-});
+}));
 
-router.delete('/trash/:id', authMiddleware, async (req, res) => {
+router.delete('/trash/:id', authMiddleware, mutation(async (req, res) => {
   try {
     const materialId = Number(req.params.id);
     const [rows] = await getPool().query(
@@ -519,8 +572,7 @@ router.delete('/trash/:id', authMiddleware, async (req, res) => {
     console.error('永久删除失败:', error);
     res.status(500).json({ code: 500, message: '永久删除失败' });
   }
-});
-const STAGING_ROOT = path.join(os.tmpdir(), 'dbdwz-upload-staging');
+}));
 const STAGING_TTL_MS = 6 * 60 * 60 * 1000;
 const finalizingTasks = new Set();
 
@@ -546,21 +598,32 @@ async function readStaging(userId, uploadTaskId) {
 
 async function writeStaging(directory, uploadTaskId, files) {
   await fs.mkdir(directory, { recursive: true });
-  await fs.writeFile(path.join(directory, 'manifest.json'), JSON.stringify({ uploadTaskId, updatedAt: new Date().toISOString(), files }, null, 2), 'utf8');
+  const temporary = path.join(directory, `manifest.${crypto.randomUUID()}.tmp`);
+  try {
+    await fs.writeFile(temporary, JSON.stringify({ uploadTaskId, updatedAt: new Date().toISOString(), files }, null, 2), 'utf8');
+    await fs.rename(temporary, path.join(directory, 'manifest.json'));
+  } finally { await fs.rm(temporary, { force: true }).catch(() => {}); }
 }
 
 async function cleanupExpiredStaging() {
+  await cleanupExpiredIncoming();
   await fs.mkdir(STAGING_ROOT, { recursive: true });
   const userDirectories = await fs.readdir(STAGING_ROOT, { withFileTypes: true }).catch(() => []);
   for (const userDirectory of userDirectories) {
-    if (!userDirectory.isDirectory()) continue;
+    if (!userDirectory.isDirectory() || !/^[1-9]\d*$/.test(userDirectory.name)) continue;
     const userPath = path.join(STAGING_ROOT, userDirectory.name);
     const tasks = await fs.readdir(userPath, { withFileTypes: true }).catch(() => []);
     for (const task of tasks) {
-      if (!task.isDirectory()) continue;
+      if (!task.isDirectory() || !validTemporaryId(task.name)) continue;
       const taskPath = path.join(userPath, task.name);
-      const stats = await fs.stat(taskPath).catch(() => null);
-      if (stats && Date.now() - stats.mtimeMs > STAGING_TTL_MS) await fs.rm(taskPath, { recursive: true, force: true }).catch(() => {});
+      await withUserLock(Number(userDirectory.name), async () => {
+        // Preserve unknown legacy directories: only an expired server manifest permits deletion.
+        const manifest = await fs.readFile(path.join(taskPath, 'manifest.json'), 'utf8').then(JSON.parse).catch(() => null);
+        const updated = manifest && Date.parse(manifest.updatedAt);
+        if (manifest && manifest.uploadTaskId === task.name && Array.isArray(manifest.files) && Number.isFinite(updated) && Date.now() - updated > STAGING_TTL_MS) {
+          await fs.rm(taskPath, { recursive: true, force: true });
+        }
+      });
     }
   }
 }
@@ -605,8 +668,11 @@ router.get('/:id/edit', authMiddleware, async (req, res) => {
 });
 
 // 修改资料：保留指定旧附件、删除未保留附件，并可追加新附件
-router.put('/:id', authMiddleware, upload.array('files', 50), async (req, res) => {
+router.put('/:id', authMiddleware, materialUpload('files', true), mutation(async (req, res) => {
   const writtenPaths = [];
+  let reservation;
+  let committed = false;
+  let releasePreviews;
   try {
     const materialId = Number(req.params.id);
     const title = String(req.body.title || '').trim();
@@ -638,8 +704,10 @@ router.put('/:id', authMiddleware, upload.array('files', 50), async (req, res) =
     if ([...keepSet].some(name => !oldNameSet.has(name))) return res.status(400).json({ code: 400, message: '保留附件中包含无效文件' });
     const incomingFiles = req.files || [];
     if (keepSet.size + incomingFiles.length === 0) return res.status(400).json({ code: 400, message: '资料至少需要保留一个附件' });
+    if (keepSet.size + incomingFiles.length > STORAGE_LIMITS.materialFiles) throw storageError('一份资料最多包含 200 个文件');
+    reservation = await reserveStorage(req.user.id, { bytes: incomingFiles.reduce((sum, file) => sum + file.size, 0), files: incomingFiles.length + 2, isCancelled: () => req.aborted || req.materialMutationCancelled || res.destroyed });
 
-    const resourceDirectory = path.resolve(__dirname, '..', '..', '资源', material.folder);
+    const resourceDirectory = path.join(resourceRoot, material.folder);
     await fs.mkdir(resourceDirectory, { recursive: true });
     const usedNames = new Set(oldFiles.map(file => file.filename.toLowerCase()));
     const addedFiles = [];
@@ -654,14 +722,17 @@ router.put('/:id', authMiddleware, upload.array('files', 50), async (req, res) =
       }
       usedNames.add(filename.toLowerCase());
       const destination = path.join(resourceDirectory, filename);
-      await fs.writeFile(destination, file.buffer);
       writtenPaths.push(destination);
+      await fs.copyFile(file.path, destination);
+      assertActive(req);
       addedFiles.push({ name: filename, size: Number(file.size) || 0, mimeType: file.mimetype || '' });
     }
 
     const removedFiles = oldFiles.filter(file => !keepSet.has(file.filename));
+    assertActive(req);
     const connection = await getPool().getConnection();
     try {
+      assertActive(req);
       await connection.beginTransaction();
       await connection.query(
         'UPDATE meeting_materials SET title = ?, description = ?, updated_at = NOW() WHERE id = ? AND user_id = ? AND is_published = 1',
@@ -674,7 +745,9 @@ router.put('/:id', authMiddleware, upload.array('files', 50), async (req, res) =
           [materialId, file.name, file.size, file.mimeType]
         );
       }
+      assertActive(req);
       await connection.commit();
+      committed = true;
     } catch (error) {
       await connection.rollback();
       throw error;
@@ -682,10 +755,13 @@ router.put('/:id', authMiddleware, upload.array('files', 50), async (req, res) =
       connection.release();
     }
 
+    releasePreviews = await cancelMaterialPreviews(material.folder, removedFiles.map(file => file.filename));
     await Promise.all(removedFiles.map(async (file) => {
       await removeFilePreview(material.folder, file.filename).catch(() => {});
       await fs.rm(path.join(resourceDirectory, file.filename), { force: true }).catch(() => {});
     }));
+    releasePreviews();
+    releasePreviews = null;
     const finalFiles = [
       ...oldFiles.filter(file => keepSet.has(file.filename)).map(file => ({ name: file.filename, size: Number(file.file_size) || 0, mimeType: file.mime_type || '' })),
       ...addedFiles
@@ -711,14 +787,17 @@ router.put('/:id', authMiddleware, upload.array('files', 50), async (req, res) =
       files: finalFiles.map(file => ({ name: file.name, size: file.size }))
     }, null, 2), 'utf8').catch(error => console.warn('更新资料元数据失败:', error.message));
 
-    const previews = await scheduleMaterialPreviews(material.folder, finalFiles);
+    const previews = await scheduleMaterialPreviews(material.folder, finalFiles, { userId: req.user.id });
     res.json({ code: 200, message: '资料修改成功，新增预览正在后台生成', data: { id: materialId, updatedAt: now.toISOString(), files: finalFiles, previews } });
   } catch (error) {
-    await Promise.all(writtenPaths.map(file => fs.rm(file, { force: true }).catch(() => {})));
+    if (!committed) await Promise.all(writtenPaths.map(file => fs.rm(file, { force: true }).catch(() => {})));
     console.error('修改组会资料失败:', error);
-    res.status(500).json({ code: 500, message: error.message || '资料修改失败' });
+    res.status(error.status || 500).json({ code: error.status || 500, message: error.message || '资料修改失败' });
+  } finally {
+    if (releasePreviews) releasePreviews();
+    if (reservation) reservation.release();
   }
-});
+}));
 
 router.get('/:id/files/:filename/preview', authMiddleware, async (req, res) => {
   try {
@@ -738,7 +817,7 @@ router.get('/:id/files/:filename/preview', authMiddleware, async (req, res) => {
     `, [materialId, filename, isTester(req.user) ? 1 : 0]);
     if (!rows.length) return res.status(404).json({ code: 404, message: '文件不存在或资料已下架' });
 
-    const filePath = path.resolve(__dirname, '..', '..', '资源', rows[0].folder, rows[0].filename);
+    const filePath = path.join(resourceRoot, rows[0].folder, rows[0].filename);
     const state = await getPreviewState(rows[0].folder, rows[0].filename);
     const originalUrl = `/materials-files/${encodeURIComponent(rows[0].folder)}/${encodeURIComponent(rows[0].filename)}`;
     if (['queued', 'processing'].includes(state.status)) {
@@ -754,12 +833,12 @@ router.get('/:id/files/:filename/preview', authMiddleware, async (req, res) => {
       return res.json({ code: 200, data: { kind: 'unsupported', message: '该格式暂不支持在线预览' } });
     }
 
-    if (state.mode === 'text') {
-      if (Number(rows[0].file_size) > 2 * 1024 * 1024) {
+    if (state.mode === 'text' || state.kind === 'html' || (state.kind === 'image' && /\.svg$/i.test(rows[0].filename))) {
+      if (Number(rows[0].file_size) > 2 * 1024 * 1024 || (await fs.stat(filePath)).size > 2 * 1024 * 1024) {
         return res.status(413).json({ code: 413, message: '文本文件超过 2MB，请下载后查看' });
       }
       const content = await fs.readFile(filePath, 'utf8');
-      return res.json({ code: 200, data: { kind: state.kind, language: state.language || '', content, cached: true } });
+      return res.json({ code: 200, data: { kind: /\.svg$/i.test(rows[0].filename) ? 'html' : state.kind, language: state.language || '', content, cached: true } });
     }
     const previewUrl = state.outputFile
       ? `/materials-files/${encodeURIComponent(rows[0].folder)}/_preview/${encodeURIComponent(state.outputFile)}`
@@ -771,7 +850,7 @@ router.get('/:id/files/:filename/preview', authMiddleware, async (req, res) => {
   }
 });
 
-router.post('/:id/unpublish', authMiddleware, async (req, res) => {
+router.post('/:id/unpublish', authMiddleware, mutation(async (req, res) => {
   let material = null;
   let moved = false;
   try {
@@ -802,6 +881,6 @@ router.post('/:id/unpublish', authMiddleware, async (req, res) => {
     console.error('下架组会资料失败:', error);
     res.status(500).json({ code: 500, message: error.message || '资料下架失败' });
   }
-});
+}));
 
 module.exports = router;

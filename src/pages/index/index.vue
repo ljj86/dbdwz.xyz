@@ -484,6 +484,7 @@
 <script>
 import WebRecords from '@/components/WebRecords.vue'
 import { isLogin, getUser, clearAuth, setAuth } from '@/store/auth.js'
+import { passwordByteLength } from '@/utils/password-policy.js'
 import { createTutorialTicket, logout as logoutApi } from '@/api/auth.js'
 import { getStoredTheme, setGlobalTheme } from '@/utils/theme.js'
 import { apiUrl, appTutorialPath, tutorialSessionUrl } from '@/utils/api.js'
@@ -526,7 +527,7 @@ export default {
       savingProfile: false,
       savingPassword: false,
       userAvatar: '',
-      profileForm: { id: '', username: '', nickname: '', avatar: '' },
+      profileForm: { id: '', username: '', nickname: '', avatar: '', avatarChanged: false },
       passwordForm: { currentPassword: '', newPassword: '', confirmPassword: '' },
       activeNav: 'recommend',
       activeTutorial: null,
@@ -925,7 +926,8 @@ export default {
         id: user.id,
         username: user.username || '',
         nickname: user.nickname || '',
-        avatar: user.avatar || ''
+        avatar: user.avatarUrl || user.avatar || '',
+        avatarChanged: false
       }
       this.profileMenuOpen = false
       this.showProfileModal = true
@@ -940,7 +942,7 @@ export default {
         if (!file) return
         if (file.size > 6 * 1024 * 1024) return uni.showToast({ title: '头像不能超过 6MB', icon: 'none' })
         const reader = new FileReader()
-        reader.onload = loadEvent => { this.profileForm.avatar = loadEvent.target.result }
+        reader.onload = loadEvent => { this.profileForm.avatar = loadEvent.target.result; this.profileForm.avatarChanged = true }
         reader.readAsDataURL(file)
       }
       input.click()
@@ -956,7 +958,7 @@ export default {
         data: {
           username: this.profileForm.username,
           nickname: this.profileForm.nickname,
-          avatar: this.profileForm.avatar
+          ...(this.profileForm.avatarChanged ? { avatar: this.profileForm.avatar } : {})
         },
         success: response => {
           if (!response.data || response.data.code !== 200) return uni.showToast({ title: (response.data && response.data.message) || '保存失败', icon: 'none' })
@@ -980,7 +982,7 @@ export default {
       const currentPassword = this.passwordForm.currentPassword
       const newPassword = this.passwordForm.newPassword
       if (!currentPassword) return uni.showToast({ title: '请输入当前密码', icon: 'none' })
-      if (newPassword.length < 8 || newPassword.length > 72) return uni.showToast({ title: '新密码必须为 8-72 个字符', icon: 'none' })
+      if (newPassword.length < 8 || passwordByteLength(newPassword) > 72) return uni.showToast({ title: '新密码至少8个字符，UTF-8不超过72字节（中文通常最多24字）', icon: 'none' })
       if (newPassword !== this.passwordForm.confirmPassword) return uni.showToast({ title: '两次输入的新密码不一致', icon: 'none' })
       this.savingPassword = true
       uni.request({
@@ -992,7 +994,10 @@ export default {
           if (!response.data || response.data.code !== 200) return uni.showToast({ title: (response.data && response.data.message) || '修改失败', icon: 'none' })
           this.showPasswordModal = false
           this.passwordForm = { currentPassword: '', newPassword: '', confirmPassword: '' }
-          uni.showToast({ title: '密码修改成功', icon: 'success' })
+          clearAuth()
+          this.syncAuthState()
+          uni.reLaunch({ url: '/pages/login/login' })
+          uni.showToast({ title: '密码已修改，请重新登录', icon: 'none' })
         },
         fail: () => uni.showToast({ title: '无法连接服务器', icon: 'none' }),
         complete: () => { this.savingPassword = false }
@@ -1191,10 +1196,7 @@ export default {
       return extension && extension.length <= 5 ? extension : 'FILE'
     },
     materialFileUrl(material, file) {
-      const url = apiUrl('/materials-files/' + encodeURIComponent(material.folder) + '/' + encodeURIComponent(file.name))
-      if (!material.testerOnly) return url
-      const token = String(uni.getStorageSync('token') || '')
-      return token ? url + '?access_token=' + encodeURIComponent(token) : url
+      return apiUrl('/materials-files/' + encodeURIComponent(material.folder) + '/' + encodeURIComponent(file.name))
     },
     openMaterialDetail(material) {
       uni.navigateTo({ url: '/pages/material-detail/material-detail?id=' + encodeURIComponent(material.id) })

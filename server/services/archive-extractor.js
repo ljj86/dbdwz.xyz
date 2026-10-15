@@ -128,6 +128,8 @@ async function extractZipNow({ archivePath, archiveName, targetDirectory, parent
       const childId = `x_${crypto.createHash('sha256').update(`${parentClientFileId}:${candidate.entryPath}:${index}`).digest('hex').slice(0, 28)}`;
       const storedName = `${childId}-${displayName}`;
       const destination = path.join(targetDirectory, storedName);
+      const temporary = path.join(targetDirectory, `.extract-${crypto.randomUUID()}`);
+      createdPaths.push(temporary);
       const source = candidate.entry.stream();
       let writtenFileBytes = 0;
       const sizeGuard = new Transform({
@@ -142,10 +144,11 @@ async function extractZipNow({ archivePath, archiveName, targetDirectory, parent
       let timer;
       try {
         timer = setTimeout(() => source.destroy(archiveError('在线解压超过 30 秒，已停止')), remaining);
-        await pipeline(source, sizeGuard, fs.createWriteStream(destination, { flags: 'wx' }));
+        await pipeline(source, sizeGuard, fs.createWriteStream(temporary, { flags: 'wx' }));
       } finally {
         clearTimeout(timer);
       }
+      await fsp.rename(temporary, destination);
       createdPaths.push(destination);
       const actual = await fsp.stat(destination);
       writtenTotal += actual.size;
