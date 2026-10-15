@@ -1,5 +1,6 @@
 const mysql = require('mysql2/promise');
 const path = require('path');
+const fs = require('fs/promises');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { syncAllProfiles } = require('./services/profile-storage');
 
@@ -58,6 +59,9 @@ async function init() {
       INDEX idx_email (email)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  // 独立会话表：保留 users.status 的在线/离线含义，不修改已有账号。
+  await pool.query(await fs.readFile(path.join(__dirname, 'db', 'auth-sessions.sql'), 'utf8'));
 
   const [avatarColumns] = await pool.query(`
     SELECT DATA_TYPE

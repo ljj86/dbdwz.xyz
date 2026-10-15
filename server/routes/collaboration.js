@@ -2,10 +2,10 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs/promises');
 const path = require('path');
-const jwt = require('jsonwebtoken');
 const archiver = require('archiver');
-const { authMiddleware, JWT_SECRET } = require('../middleware/auth');
+const { authMiddleware } = require('../middleware/auth');
 const { getPool } = require('../db');
+const { publicAvatarUrl, publicUser } = require('../services/avatar');
 
 const router = express.Router();
 let categorizedDownloadRunning = false;
@@ -18,10 +18,6 @@ function safeName(name) {
 
 function safeZipSegment(name, fallback = '未分类') {
   return String(name || fallback).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/[. ]+$/g, '').slice(0, 100) || fallback;
-}
-
-function avatarUrl(req, user) {
-  return user.avatar ? `${req.protocol}://${req.get('host')}/api/auth/avatar/${user.id}` : '';
 }
 
 async function membership(spaceId, userId) {
@@ -81,7 +77,9 @@ router.get('/spaces/:id', authMiddleware, async (req, res) => {
     if (!space) return res.status(404).json({ code: 404, message: '协作空间不存在' });
     await getPool().query('DELETE FROM collaboration_presence WHERE last_seen <= DATE_SUB(NOW(), INTERVAL 45 SECOND)');
     const [members] = await getPool().query(
-      `SELECT u.id,u.username,u.nickname,u.avatar,u.role,p.last_seen
+      `SELECT u.id,u.username,u.nickname,u.role,p.last_seen,
+       CASE WHEN COALESCE(u.avatar,'')<>'' THEN 1 ELSE 0 END AS has_avatar,
+       SUBSTRING(SHA2(COALESCE(u.avatar,''),256),1,24) AS avatar_version
        FROM collaboration_presence p JOIN users u ON u.id=p.user_id
        WHERE p.space_id=? ORDER BY p.last_seen`,
       [space.id]
@@ -91,7 +89,9 @@ router.get('/spaces/:id', authMiddleware, async (req, res) => {
       [space.id]
     );
     const [papers] = await getPool().query(
-      `SELECT p.*,u.username,u.nickname,u.avatar
+      `SELECT p.*,u.username,u.nickname,
+       CASE WHEN COALESCE(u.avatar,'')<>'' THEN 1 ELSE 0 END AS has_avatar,
+       SUBSTRING(SHA2(COALESCE(u.avatar,''),256),1,24) AS avatar_version
        FROM collaboration_papers p JOIN users u ON u.id=p.uploader_id
        WHERE p.space_id=? ORDER BY p.created_at DESC`,
       [space.id]
@@ -100,14 +100,14 @@ router.get('/spaces/:id', authMiddleware, async (req, res) => {
       code: 200,
       data: {
         space,
-        members: members.map(user => ({ ...user, avatarUrl: avatarUrl(req, user), avatar: undefined })),
+        members: members.map(user => publicUser(req, user)),
         categories,
         canEdit: await activePresence(space.id, req.user.id),
         papers: papers.map(paper => ({
           id: paper.id, title: paper.title, authors: paper.authors, note: paper.note, category: paper.category || '未分类',
           filename: paper.filename, fileSize: Number(paper.file_size), mimeType: paper.mime_type,
           createdAt: paper.created_at,
-          uploader: { id: paper.uploader_id, username: paper.username, nickname: paper.nickname, avatarUrl: avatarUrl(req, paper) }
+          uploader: { id: paper.uploader_id, username: paper.username, nickname: paper.nickname, avatarUrl: publicAvatarUrl(req, { ...paper, id: paper.uploader_id }) }
         }))
       }
     });
@@ -144,10 +144,11 @@ router.get('/users', authMiddleware, async (req, res) => {
   try {
     const keyword = `%${String(req.query.q || '').trim()}%`;
     const [users] = await getPool().query(
-      'SELECT id,username,nickname,avatar FROM users WHERE status=1 AND id<>? AND (username LIKE ? OR nickname LIKE ?) ORDER BY nickname,username LIMIT 20',
+      `SELECT id,username,nickname, CASE WHEN COALESCE(avatar,'')<>'' THEN 1 ELSE 0 END AS has_avatar,
+       SUBSTRING(SHA2(COALESCE(avatar,''),256),1,24) AS avatar_version FROM users WHERE status=1 AND id<>? AND (username LIKE ? OR nickname LIKE ?) ORDER BY nickname,username LIMIT 20`,
       [req.user.id, keyword, keyword]
     );
-    res.json({ code: 200, data: { users: users.map(user => ({ ...user, avatarUrl: avatarUrl(req, user), avatar: undefined })) } });
+    res.json({ code: 200, data: { users: users.map(user => publicUser(req, user)) } });
   } catch {
     res.status(500).json({ code: 500, message: '搜索成员失败' });
   }
@@ -334,19 +335,17 @@ router.post('/spaces/:id/papers', authMiddleware, upload.single('file'), async (
   }
 });
 
-router.get('/papers/:id/file', async (req, res) => {
+router.get('/papers/:id/file', authMiddleware, async (req, res) => {
   try {
-    const bearer = String(req.headers.authorization || '').startsWith('Bearer ') ? String(req.headers.authorization).slice(7) : '';
-    const user = jwt.verify(bearer || String(req.query.access_token || ''), JWT_SECRET);
     const [rows] = await getPool().query('SELECT * FROM collaboration_papers WHERE id=? LIMIT 1', [Number(req.params.id)]);
-    if (!rows.length || !user) return res.sendStatus(403);
+    if (!rows.length) return res.sendStatus(403);
     res.download(path.join(paperRoot, path.basename(rows[0].stored_name)), rows[0].filename);
   } catch {
     res.sendStatus(403);
   }
 });
 
-router.get('/spaces/:id/download', async (req, res) => {
+router.get('/spaces/:id/download', authMiddleware, async (req, res) => {
   if (categorizedDownloadRunning) {
     return res.status(429).json({ code: 429, message: '已有分类压缩包正在生成，请稍后重试' });
   }
@@ -355,9 +354,6 @@ router.get('/spaces/:id/download', async (req, res) => {
   res.once('close', releaseDownloadLock);
   res.once('finish', releaseDownloadLock);
   try {
-    const bearer = String(req.headers.authorization || '').startsWith('Bearer ') ? String(req.headers.authorization).slice(7) : '';
-    const user = jwt.verify(bearer || String(req.query.access_token || ''), JWT_SECRET);
-    if (!user) return res.sendStatus(403);
     const spaceId = Number(req.params.id);
     const [spaces] = await getPool().query('SELECT name FROM collaboration_spaces WHERE id=? LIMIT 1', [spaceId]);
     if (!spaces.length) return res.sendStatus(404);

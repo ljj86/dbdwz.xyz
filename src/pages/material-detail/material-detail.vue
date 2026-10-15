@@ -44,14 +44,14 @@
               <small v-if="selectedFile">{{ previewLabel }}</small>
             </view>
             <view v-if="selectedFile" class="preview-actions">
-              <a class="download-button" :href="fileUrl(selectedFile)" target="_blank" download>下载</a>
+              <view class="download-button" @click="downloadFile(selectedFile)">下载</view>
               <view class="fullscreen-button" @click="toggleFullscreenPreview">{{ isFullscreenPreview ? '退出全屏' : '全屏预览' }}</view>
             </view>
           </view>
 
           <view v-if="!selectedFile" class="preview-empty"><text>←</text><strong>从左侧选择一个文件</strong></view>
           <view v-else-if="previewLoading" class="preview-empty"><strong>{{ previewMessage || '正在读取预览…' }}</strong><small v-if="previewProgress">{{ previewProgress }}%</small></view>
-          <view v-else-if="previewError" class="preview-empty error-state"><text>!</text><strong>{{ previewError }}</strong><a :href="fileUrl(selectedFile)" target="_blank" download>下载文件</a></view>
+          <view v-else-if="previewError" class="preview-empty error-state"><text>!</text><strong>{{ previewError }}</strong><view class="download-button" @click="downloadFile(selectedFile)">下载文件</view></view>
 
           <view v-else-if="previewKind === 'image'" class="media-preview image-stage">
             <image :src="previewUrl || fileUrl(selectedFile)" mode="aspectFit" />
@@ -66,7 +66,7 @@
           </view>
           <!-- #ifdef H5 -->
           <iframe v-else-if="previewKind === 'pdf'" class="document-frame" :src="previewUrl || fileUrl(selectedFile)"></iframe>
-          <iframe v-else-if="previewKind === 'html'" class="document-frame html-frame" :src="previewUrl || fileUrl(selectedFile)" sandbox></iframe>
+          <iframe v-else-if="previewKind === 'html'" class="document-frame html-frame" :srcdoc="previewHtml" sandbox referrerpolicy="no-referrer"></iframe>
           <!-- #endif -->
           <scroll-view v-else-if="previewKind === 'text'" class="code-preview" scroll-y scroll-x>
             <pre>{{ previewText }}</pre>
@@ -81,7 +81,7 @@
             <view class="unsupported-icon">{{ fileExtension(selectedFile.name) }}</view>
             <strong>暂不支持在线预览这种文件</strong>
             <small>可以下载后使用本地应用打开</small>
-            <a :href="fileUrl(selectedFile)" target="_blank" download>下载文件</a>
+            <view class="download-button" @click="downloadFile(selectedFile)">下载文件</view>
           </view>
         </view>
       </view>
@@ -123,6 +123,8 @@ export default {
       selectedFile: null,
       loading: true,
       previewLoading: false,
+      nativePreviewLoading: false,
+      previewGeneration: 0,
       previewError: '',
       previewText: '',
       previewHtml: '',
@@ -169,6 +171,9 @@ export default {
   },
   onUnload() {
     this.clearPreviewPoll()
+    this.cancelDocumentPreview()
+    this.previewGeneration += 1
+    this.previewHtml = ''
     // #ifdef H5
     document.removeEventListener('keydown', this.handlePreviewKeydown)
     // #endif
@@ -193,11 +198,14 @@ export default {
     },
     selectFile(file) {
       this.clearPreviewPoll()
+      this.cancelDocumentPreview()
+      this.previewGeneration += 1
       this.selectedFile = file
       this.previewError = ''
       this.previewText = ''
       this.previewHtml = ''
       this.previewUrl = ''
+      this.nativePreviewLoading = false
       this.resolvedPreviewKind = ''
       this.previewMessage = ''
       this.previewProgress = 0
@@ -205,12 +213,13 @@ export default {
       this.loadGeneratedPreview(file)
     },
     loadGeneratedPreview(file) {
+      const generation = this.previewGeneration
       this.previewLoading = true
       uni.request({
         url: apiUrl(`/api/materials/${this.material.id}/files/${encodeURIComponent(file.name)}/preview`),
         header: { Authorization: 'Bearer ' + uni.getStorageSync('token') },
         success: response => {
-          if (!this.selectedFile || this.selectedFile.name !== file.name) return
+          if (generation !== this.previewGeneration || !this.selectedFile || this.selectedFile.name !== file.name) return
           const payload = response.data || {}
           const data = payload.data || {}
           if (data.kind === 'processing') {
@@ -224,8 +233,40 @@ export default {
             return
           }
           this.resolvedPreviewKind = data.kind || 'unsupported'
-          if (data.url) this.previewUrl = this.withAccessToken(apiUrl(data.url))
+          if (data.url) {
+            // #ifdef H5
+            this.previewUrl = apiUrl(data.url)
+            // #endif
+            // #ifndef H5
+            this.nativePreviewLoading = true
+            this.downloadNativeFile(apiUrl(data.url)).then(filePath => {
+              if (generation === this.previewGeneration) this.previewUrl = filePath
+            }).catch(error => { if (generation === this.previewGeneration) this.previewError = error.message || '预览下载失败' }).finally(() => {
+              if (generation !== this.previewGeneration) return
+              this.nativePreviewLoading = false
+              this.previewLoading = false
+            })
+            // #endif
+          }
+          // Native renderers do not have a DOM sandbox; source markup stays text.
+          // #ifndef H5
+          if (typeof data.content === 'string') {
+            this.resolvedPreviewKind = 'text'
+            this.previewText = data.content
+            return
+          }
+          // #endif
           if (data.kind === 'text') this.previewText = data.content || ''
+          else if (data.kind === 'html') {
+            this.nativePreviewLoading = true
+            Promise.resolve(this.renderUntrustedDocument(data.content || '')).then(html => {
+              if (generation === this.previewGeneration) this.previewHtml = html
+            }).catch(() => { if (generation === this.previewGeneration) this.previewError = '无法读取安全文档预览，请下载查看' }).finally(() => {
+              if (generation !== this.previewGeneration) return
+              this.nativePreviewLoading = false
+              this.previewLoading = false
+            })
+          }
           else if (data.kind === 'code') this.previewHtml = this.renderCode(data.content || '', data.language || this.extension(file.name))
           else if (data.kind === 'markdown') this.previewHtml = DOMPurify.sanitize(markdown.render(data.content || ''))
           else if (data.kind === 'latex') this.previewHtml = this.renderLatex(data.content || '')
@@ -233,7 +274,7 @@ export default {
         },
         fail: () => { this.previewError = '无法连接预览服务' },
         complete: () => {
-          if (!this.previewPollTimer) this.previewLoading = false
+          if (generation === this.previewGeneration && !this.previewPollTimer && !this.nativePreviewLoading) this.previewLoading = false
         }
       })
     },
@@ -270,6 +311,90 @@ export default {
       }
       return DOMPurify.sanitize(`<pre><code class="hljs">${highlighted}</code></pre>`)
     },
+    cancelDocumentPreview() {
+      if (this._documentPreviewController) this._documentPreviewController.abort()
+      this._documentPreviewController = null
+    },
+    async renderUntrustedDocument(content) {
+      // #ifdef H5
+      this.cancelDocumentPreview()
+      const controller = new AbortController()
+      this._documentPreviewController = controller
+      const clean = DOMPurify.sanitize(content, {
+        USE_PROFILES: { html: true, svg: true, svgFilters: true },
+        FORBID_TAGS: ['base', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'link', 'meta'],
+        FORBID_ATTR: ['srcset', 'action', 'formaction']
+      })
+      const base = new URL(apiUrl('/materials-files/' + encodeURIComponent(this.material.folder) + '/'), window.location.href)
+      const document = new DOMParser().parseFromString(clean, 'text/html')
+      const allowed = new Set((this.material.files || []).filter(file => /\.(?:png|jpe?g|gif|webp|bmp|ico|avif)$/i.test(file.name)).map(file => file.name))
+      const cached = new Map()
+      let remaining = 8 * 1024 * 1024
+      const images = Array.from(document.querySelectorAll('img, svg image, svg feImage'))
+      for (const [index, image] of images.entries()) {
+        const attributes = image.localName === 'img' ? ['src'] : ['href', 'xlink:href']
+        const clearSource = () => attributes.forEach(attribute => image.removeAttribute(attribute))
+        const setSource = value => { clearSource(); image.setAttribute(attributes[0], value) }
+        if (controller.signal.aborted) throw new Error('预览已取消')
+        if (index >= 50) { clearSource(); continue }
+        const source = attributes.map(attribute => image.getAttribute(attribute)).find(Boolean) || ''
+        if (source.startsWith('data:')) { setSource(source); continue }
+        let url
+        try { url = new URL(source, base) } catch { clearSource(); continue }
+        // Only database-listed images in this material can be copied into the
+        // opaque frame. Its own network access remains disabled.
+        let filename
+        try { filename = decodeURIComponent(url.pathname.slice(base.pathname.length)) } catch { filename = '' }
+        if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname) || url.search || url.hash || !allowed.has(filename)) {
+          clearSource()
+          continue
+        }
+        if (cached.has(filename)) { setSource(cached.get(filename)); continue }
+        try {
+          const canonicalUrl = new URL(encodeURIComponent(filename), base)
+          const response = await fetch(canonicalUrl.href, { signal: controller.signal, credentials: 'include', headers: { Authorization: 'Bearer ' + uni.getStorageSync('token') }, redirect: 'error' })
+          const cap = Math.min(2 * 1024 * 1024, remaining)
+          const mime = (response.headers.get('Content-Type') || '').split(';')[0].toLowerCase()
+          if (!response.ok || !/^image\/(?:png|jpeg|gif|webp|bmp|x-icon|vnd.microsoft.icon|avif)$/.test(mime) || Number(response.headers.get('Content-Length')) > cap || !response.body) {
+            if (response.body) await response.body.cancel()
+            throw new Error('图片超过预览限制')
+          }
+          const reader = response.body.getReader()
+          const chunks = []
+          let size = 0
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            size += value.byteLength
+            if (size > cap) { await reader.cancel(); throw new Error('图片超过预览限制') }
+            chunks.push(value)
+          }
+          remaining -= size
+          if (controller.signal.aborted) throw new Error('预览已取消')
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result)
+            reader.onerror = reject
+            reader.readAsDataURL(new Blob(chunks, { type: mime }))
+          })
+          cached.set(filename, dataUrl)
+          setSource(dataUrl)
+        } catch (error) {
+          if (controller.signal.aborted) throw error
+          clearSource()
+        }
+      }
+      if (controller.signal.aborted) throw new Error('预览已取消')
+      const escapedBase = base.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+      const policy = `default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri ${base.origin}; form-action 'none'`
+      return `<meta http-equiv="Content-Security-Policy" content="${policy.replace(/"/g, '&quot;')}"><base href="${escapedBase}">${document.body.innerHTML}`
+      // #endif
+      // #ifndef H5
+      this.resolvedPreviewKind = 'text'
+      this.previewText = String(content || '')
+      return ''
+      // #endif
+    },
     renderLatex(content) {
       try {
         return DOMPurify.sanitize(katex.renderToString(content.trim(), { displayMode: true, throwOnError: false, strict: 'ignore', trust: false }))
@@ -291,13 +416,32 @@ export default {
     },
     fileUrl(file) {
       if (!this.material || !file) return ''
-      return this.withAccessToken(apiUrl('/materials-files/' + encodeURIComponent(this.material.folder) + '/' + encodeURIComponent(file.name)))
+      return apiUrl('/materials-files/' + encodeURIComponent(this.material.folder) + '/' + encodeURIComponent(file.name))
     },
-    withAccessToken(url) {
-      if (!this.material || !this.material.testerOnly) return url
-      const token = String(uni.getStorageSync('token') || '')
-      if (!token) return url
-      return url + (url.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(token)
+    downloadNativeFile(url) {
+      return new Promise((resolve, reject) => {
+        uni.downloadFile({
+          url,
+          header: { Authorization: 'Bearer ' + uni.getStorageSync('token') },
+          success: result => result.statusCode === 200 ? resolve(result.tempFilePath) : reject(new Error('文件下载失败，请重新登录后重试')),
+          fail: () => reject(new Error('无法连接文件服务'))
+        })
+      })
+    },
+    downloadFile(file) {
+      if (!file) return
+      // #ifdef H5
+      const link = document.createElement('a')
+      link.href = this.fileUrl(file)
+      link.download = file.name
+      link.rel = 'noopener noreferrer'
+      link.click()
+      // #endif
+      // #ifndef H5
+      this.downloadNativeFile(this.fileUrl(file)).then(filePath => {
+        uni.openDocument({ filePath, showMenu: true, fail: () => uni.showToast({ title: '文件已下载，当前设备不支持打开此格式', icon: 'none' }) })
+      }).catch(error => uni.showToast({ title: error.message, icon: 'none' }))
+      // #endif
     },
     formatFileSize(size) {
       const value = Number(size) || 0

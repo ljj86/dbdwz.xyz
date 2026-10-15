@@ -1,8 +1,9 @@
 const fs = require('fs/promises');
 const path = require('path');
 const { deletedDirectory, ensureUserDirectories } = require('./profile-storage');
+const { cancelMaterialPreviews } = require('./preview-storage');
+const { resourceRoot: RESOURCE_ROOT } = require('./upload-storage');
 
-const RESOURCE_ROOT = path.resolve(__dirname, '..', '..', '资源');
 const RETENTION_DAYS = 3;
 
 function materialTrashDirectory(userId, materialId, folder) {
@@ -20,6 +21,8 @@ async function pathExists(target) {
 }
 
 async function moveToTrash(material) {
+  const release = await cancelMaterialPreviews(material.folder);
+  try {
   await ensureUserDirectories(material.user_id);
   const source = path.join(RESOURCE_ROOT, path.basename(material.folder));
   const target = materialTrashDirectory(material.user_id, material.id, material.folder);
@@ -28,6 +31,7 @@ async function moveToTrash(material) {
   await fs.rm(target, { recursive: true, force: true });
   await fs.rename(source, target);
   return target;
+  } finally { release(); }
 }
 
 async function restoreFromTrash(material) {
@@ -59,9 +63,12 @@ async function rollbackTrash(material) {
 }
 
 async function permanentlyRemove(material) {
+  const release = await cancelMaterialPreviews(material.folder);
+  try {
   await fs.rm(materialTrashDirectory(material.user_id, material.id, material.folder), { recursive: true, force: true });
   // 兼容旧版下架记录：如果文件仍留在资源目录，也一并清理。
   await fs.rm(path.join(RESOURCE_ROOT, path.basename(material.folder)), { recursive: true, force: true });
+  } finally { release(); }
 }
 
 async function updateTrashMetadata(material, title, description) {

@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
 const { init, getPool } = require('../db');
+const { validNewPassword } = require('../services/password-policy');
 
 async function main() {
   const username = String(process.env.ADMIN_USERNAME || '').trim();
@@ -9,8 +10,8 @@ async function main() {
   if (!/^[a-zA-Z0-9_]{2,50}$/.test(username)) {
     throw new Error('请通过 ADMIN_USERNAME 提供 2-50 位字母、数字或下划线账号');
   }
-  if (password.length < 12 || password.length > 72) {
-    throw new Error('请通过 ADMIN_PASSWORD 提供 12-72 位强密码');
+  if (!validNewPassword(password, 12)) {
+    throw new Error('请通过 ADMIN_PASSWORD 提供至少 12 个字符、UTF-8 不超过 72 字节的强密码');
   }
   if (!nickname || nickname.length > 50) throw new Error('ADMIN_NICKNAME 长度必须为 1-50 个字符');
 

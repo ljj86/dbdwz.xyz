@@ -1,10 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const jwt = require('jsonwebtoken');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { init, getPool } = require('./db');
-const { JWT_SECRET, tutorialStaticMiddleware } = require('./middleware/auth');
+const { authMiddleware, tutorialStaticMiddleware } = require('./middleware/auth');
+const { materialFiles } = require('./middleware/material-files');
 const { cleanupExpiredTrash } = require('./services/trash-storage');
 const { resumePendingPreviews } = require('./services/preview-storage');
 const { version: appVersion } = require('./package.json');
@@ -31,7 +31,7 @@ const allowedOrigins = new Set(
 );
 
 // 中间件
-app.set('trust proxy', 1);
+app.set('trust proxy', 'loopback');
 app.use(cors({
   credentials: true,
   origin(origin, callback) {
@@ -50,33 +50,7 @@ app.use('/api/resources', resourceRoutes);
 app.use('/api/collaboration', collaborationRoutes);
 app.use('/api/app-updates', appUpdateRoutes);
 app.use('/static/web', tutorialStaticMiddleware);
-app.use('/materials-files/:folder', async (req, res, next) => {
-  try {
-    const [rows] = await getPool().query(
-      'SELECT m.tester_only, COALESCE(u.materials_hidden, 0) AS uploader_hidden FROM meeting_materials m JOIN users u ON u.id = m.user_id WHERE m.folder = ? LIMIT 1',
-      [path.basename(String(req.params.folder || ''))]
-    );
-    if (!rows.length) return next();
-    const needsAuth = !!rows[0].tester_only;
-    if (!needsAuth) return next();
-    const bearer = String(req.headers.authorization || '').startsWith('Bearer ')
-      ? String(req.headers.authorization).slice(7)
-      : '';
-    const token = bearer || String(req.query.access_token || '');
-    const user = token ? jwt.verify(token, JWT_SECRET) : null;
-    if (!user || user.role !== 'admin') return res.sendStatus(403);
-    next();
-  } catch (error) {
-    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') return res.sendStatus(403);
-    console.error('[Materials files] 权限检查失败:', error.message);
-    res.sendStatus(500);
-  }
-});
-app.use('/materials-files/:folder/_preview/:filename', (req, res, next) => {
-  if (String(req.params.filename || '').toLowerCase().endsWith('.json')) return res.sendStatus(404);
-  next();
-});
-app.use('/materials-files', express.static(path.resolve(__dirname, '..', '资源'), { fallthrough: false }));
+app.use('/materials-files', authMiddleware, materialFiles);
 
 // 健康检查
 app.get('/api/health', async (req, res) => {

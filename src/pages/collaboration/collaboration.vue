@@ -513,9 +513,9 @@ export default {
     },
     downloadCategorized() {
       if (!this.papers.length) return uni.showToast({ title: '当前没有可下载的论文', icon: 'none' })
-      window.open(apiUrl(`/api/collaboration/spaces/${this.space.id}/download?access_token=${encodeURIComponent(getToken())}`), '_blank')
+      window.open(apiUrl(`/api/collaboration/spaces/${this.space.id}/download`), '_blank', 'noopener')
     },
-    downloadPaper(paper) { window.open(apiUrl(`/api/collaboration/papers/${paper.id}/file?access_token=${encodeURIComponent(getToken())}`), '_blank') },
+    downloadPaper(paper) { window.open(apiUrl(`/api/collaboration/papers/${paper.id}/file`), '_blank', 'noopener') },
     extension(name) { const ext = String(name || '').split('.').pop().slice(0, 4).toUpperCase(); return ext || 'FILE' },
     formatSize(bytes) { const n = Number(bytes || 0); if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(1) + ' KB'; return (n / 1048576).toFixed(1) + ' MB' },
     formatTime(value) { const date = new Date(value); const now = new Date(); if (date.toDateString() === now.toDateString()) return '今天 ' + date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }); return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) }
